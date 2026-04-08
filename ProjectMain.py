@@ -40,7 +40,7 @@ def battle(player, monster, questions):
 
 
 def main():
-    print("Welcome to Python Battle Game!")
+    print("Welcome to C++ Quest Academy!")
     print("(Type 'q' at any time to quit)\n")
 
     player_name = input("Enter your player name: ").strip()
