@@ -178,14 +178,6 @@ def choose_mode():
 
 
 def main():
-    # Main game setup:
-    # - welcome the player
-    # - get their name
-    # - create the player, questions, and monsters
-    # - ask which mode to play
-    # - run the selected mode
-    # - show the final game result
-
     print("Welcome to C++ Quest Academy!")
     print("(Type 'q' at any time to quit)\n")
 
