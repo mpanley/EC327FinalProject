@@ -1,7 +1,6 @@
 # app.py - Flask backend for C++ Quest Academy
 
 from flask import Flask, jsonify, request, session, render_template
-from flask import send_from_directory
 import random
 import os
 
