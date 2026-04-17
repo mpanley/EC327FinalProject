@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>C++ Quest Academy</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Share+Tech+Mono&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --green: #00ff88;
+    --green-dim: #00aa55;
+    --red: #ff3355;
+    --blue: #00aaff;
+    --yellow: #ffcc00;
+    --bg: #050a0e;
+    --panel: rgba(5, 20, 15, 0.92);
+    --border: rgba(0, 255, 136, 0.3);
+    --text: #c8ffe8;
+  }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Share Tech Mono', monospace;
+    overflow: hidden;
+  }
+
+  /* ── CANVAS ── */
+  #game-canvas { position: fixed; inset: 0; z-index: 0; }
+
+  /* ── SCANLINE overlay ── */
+  #scanlines {
+    position: fixed; inset: 0; z-index: 1;
+    background: repeating-linear-gradient(
+      to bottom,
+      transparent 0px, transparent 3px,
+      rgba(0,0,0,0.08) 3px, rgba(0,0,0,0.08) 4px
+    );
+    pointer-events: none;
+  }
+
+  /* ── SCREENS ── */
+  .screen {
+    position: fixed; inset: 0; z-index: 10;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.85);
+    transition: opacity 0.4s;
+  }
+  .screen.hidden { opacity: 0; pointer-events: none; }
+
+  /* ── MENU ── */
+  #menu-screen {
+    background: radial-gradient(ellipse at 50% 40%, #001a0f 0%, #050a0e 70%);
+  }
+  .menu-title {
+    font-family: 'Press Start 2P', monospace;
+    font-size: clamp(18px, 4vw, 38px);
+    color: var(--green);
+    text-shadow: 0 0 20px var(--green), 0 0 60px rgba(0,255,136,0.3);
+    text-align: center;
+    line-height: 1.6;
+    margin-bottom: 12px;
+    letter-spacing: 2px;
+  }
+  .menu-sub {
+    font-size: 13px;
+    color: var(--green-dim);
+    margin-bottom: 48px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+  }
+  .name-input {
+    background: transparent;
+    border: 1px solid var(--green);
+    color: var(--green);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 18px;
+    padding: 12px 20px;
+    width: 320px;
+    outline: none;
+    margin-bottom: 32px;
+    text-align: center;
+    box-shadow: 0 0 12px rgba(0,255,136,0.2);
+    caret-color: var(--green);
+  }
+  .name-input::placeholder { color: rgba(0,255,136,0.3); }
+  .name-input:focus { box-shadow: 0 0 24px rgba(0,255,136,0.4); }
+
+  .mode-buttons { display: flex; gap: 24px; margin-bottom: 16px; }
+  .btn {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 11px;
+    padding: 16px 28px;
+    border: 1px solid var(--green);
+    background: transparent;
+    color: var(--green);
+    cursor: pointer;
+    letter-spacing: 1px;
+    transition: all 0.2s;
+    text-transform: uppercase;
+    position: relative;
+    overflow: hidden;
+  }
+  .btn::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: var(--green);
+    transform: translateY(100%);
+    transition: transform 0.2s;
+    z-index: -1;
+  }
+  .btn:hover { color: var(--bg); box-shadow: 0 0 20px rgba(0,255,136,0.5); }
+  .btn:hover::before { transform: translateY(0); }
+  .btn.red { border-color: var(--red); color: var(--red); }
+  .btn.red::before { background: var(--red); }
+  .btn.blue { border-color: var(--blue); color: var(--blue); }
+  .btn.blue::before { background: var(--blue); }
+  .btn.yellow { border-color: var(--yellow); color: var(--yellow); }
+  .btn.yellow::before { background: var(--yellow); }
+  .mode-desc { font-size: 11px; color: rgba(0,255,136,0.5); text-align: center; max-width: 500px; line-height: 1.8; }
+
+  /* ── HUD ── */
+  #hud {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 5;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 20px;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.8) 0%, transparent 100%);
+    pointer-events: none;
+  }
+  #hud.hidden { display: none; }
+  .hud-name {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 10px; color: var(--green); letter-spacing: 2px;
+  }
+  .hp-bar-wrap { display: flex; align-items: center; gap: 10px; }
+  .hp-label { font-size: 10px; color: var(--red); font-family: 'Press Start 2P', monospace; }
+  .hp-bar {
+    width: 200px; height: 14px;
+    border: 1px solid rgba(255,51,85,0.5);
+    background: rgba(0,0,0,0.6);
+    position: relative; overflow: hidden;
+  }
+  .hp-fill {
+    height: 100%; background: var(--red);
+    transition: width 0.5s;
+    box-shadow: 0 0 8px rgba(255,51,85,0.6);
+  }
+  .hp-text { font-size: 10px; color: var(--text); min-width: 50px; }
+  .hud-mode { font-size: 9px; color: var(--green-dim); font-family: 'Press Start 2P', monospace; }
+
+  /* ── CONTROLS HINT ── */
+  #controls-hint {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    z-index: 5;
+    font-size: 10px; color: rgba(0,255,136,0.4);
+    letter-spacing: 2px; text-align: center;
+    pointer-events: none;
+  }
+  #controls-hint.hidden { display: none; }
+
+  /* ── PROXIMITY PROMPT ── */
+  #proximity-prompt {
+    position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+    z-index: 5;
+    background: var(--panel);
+    border: 1px solid var(--green);
+    padding: 14px 28px;
+    text-align: center;
+    box-shadow: 0 0 20px rgba(0,255,136,0.2);
+    opacity: 0; transition: opacity 0.3s;
+    pointer-events: none;
+    min-width: 300px;
+  }
+  #proximity-prompt.visible { opacity: 1; pointer-events: auto; }
+  .prox-monster-name {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 11px; color: var(--yellow); margin-bottom: 8px;
+  }
+  .prox-diff { font-size: 11px; color: var(--green-dim); margin-bottom: 12px; }
+  .prox-actions { display: flex; gap: 12px; justify-content: center; }
+
+  /* ── COMBAT SCREEN ── */
+  #combat-screen {
+    background: rgba(0, 5, 3, 0.96);
+    backdrop-filter: blur(4px);
+  }
+  .combat-layout {
+    display: grid;
+    grid-template-columns: 1fr 480px 1fr;
+    grid-template-rows: auto 1fr;
+    width: 100%; max-width: 1000px;
+    gap: 0; padding: 0 20px;
+    align-items: center;
+  }
+  .combatant {
+    display: flex; flex-direction: column; align-items: center; gap: 16px;
+  }
+  .combatant-label {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 9px; letter-spacing: 2px; color: var(--green-dim);
+  }
+  .combatant-model {
+    width: 140px; height: 140px;
+    position: relative;
+  }
+  .combatant-model canvas { width: 100% !important; height: 100% !important; }
+  .combatant-name {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 11px; color: var(--text);
+  }
+  .combatant-hp-bar {
+    width: 180px; height: 12px;
+    border: 1px solid rgba(255,51,85,0.4);
+    background: rgba(0,0,0,0.5);
+    overflow: hidden;
+  }
+  .combatant-hp-fill { height: 100%; background: var(--red); transition: width 0.5s; }
+
+  /* VS */
+  .vs-col {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 24px;
+  }
+  .vs-text {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 28px;
+    color: var(--yellow);
+    text-shadow: 0 0 20px rgba(255,204,0,0.6);
+  }
+  .correct-counter {
+    font-size: 11px; color: var(--green);
+    letter-spacing: 1px; text-align: center;
+  }
+
+  /* Question panel */
+  .question-panel {
+    grid-column: 1 / -1;
+    margin-top: 28px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    padding: 28px 32px;
+    width: 100%; max-width: 800px;
+    margin-left: auto; margin-right: auto;
+    box-shadow: 0 0 30px rgba(0,255,136,0.08);
+  }
+  .q-difficulty {
+    font-size: 10px; color: var(--green-dim); letter-spacing: 2px;
+    text-transform: uppercase; margin-bottom: 16px;
+  }
+  .q-text {
+    font-size: 16px; color: var(--text);
+    line-height: 1.7; margin-bottom: 24px;
+    min-height: 50px;
+  }
+  .answer-row { display: flex; gap: 12px; }
+  .answer-input {
+    flex: 1;
+    background: transparent;
+    border: 1px solid var(--green);
+    color: var(--green);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 16px;
+    padding: 12px 16px;
+    outline: none;
+    caret-color: var(--green);
+  }
+  .answer-input:focus { box-shadow: 0 0 14px rgba(0,255,136,0.3); }
+
+  /* Feedback toast */
+  #feedback-toast {
+    position: fixed; top: 80px; left: 50%; transform: translateX(-50%);
+    z-index: 20;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 11px; letter-spacing: 1px;
+    padding: 14px 28px;
+    border: 1px solid;
+    opacity: 0; transition: opacity 0.3s;
+    pointer-events: none; text-align: center;
+    max-width: 500px; line-height: 1.8;
+  }
+  #feedback-toast.correct {
+    color: var(--green); border-color: var(--green);
+    background: rgba(0,255,136,0.08);
+    box-shadow: 0 0 20px rgba(0,255,136,0.2);
+  }
+  #feedback-toast.wrong {
+    color: var(--red); border-color: var(--red);
+    background: rgba(255,51,85,0.08);
+    box-shadow: 0 0 20px rgba(255,51,85,0.2);
+  }
+  #feedback-toast.visible { opacity: 1; }
+
+  /* ── GAME OVER SCREEN ── */
+  #gameover-screen { background: rgba(0,0,0,0.94); }
+  .gameover-title {
+    font-family: 'Press Start 2P', monospace;
+    font-size: clamp(20px, 5vw, 48px);
+    margin-bottom: 20px;
+    text-align: center;
+  }
+  .gameover-title.win { color: var(--green); text-shadow: 0 0 30px rgba(0,255,136,0.5); }
+  .gameover-title.lose { color: var(--red); text-shadow: 0 0 30px rgba(255,51,85,0.5); }
+  .gameover-sub { font-size: 14px; color: var(--text); margin-bottom: 40px; text-align: center; line-height: 2; }
+
+  /* Progress dots */
+  #monster-progress {
+    position: fixed; top: 56px; right: 16px; z-index: 5;
+    display: flex; flex-direction: column; gap: 6px; align-items: flex-end;
+  }
+  #monster-progress.hidden { display: none; }
+  .prog-item {
+    font-size: 9px; color: rgba(0,255,136,0.4);
+    display: flex; align-items: center; gap: 8px;
+    font-family: 'Press Start 2P', monospace;
+    letter-spacing: 1px;
+  }
+  .prog-item.defeated { color: var(--green); }
+  .prog-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: rgba(0,255,136,0.2);
+    border: 1px solid rgba(0,255,136,0.3);
+  }
+  .prog-item.defeated .prog-dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
+
+</style>
+</head>
+<body>
+
+<canvas id="game-canvas"></canvas>
+<div id="scanlines"></div>
+
+<!-- ── MENU SCREEN ── -->
+<div id="menu-screen" class="screen">
+  <div class="menu-title">C++ QUEST<br>ACADEMY</div>
+  <div class="menu-sub">The Dungeon of Code</div>
+  <input class="name-input" id="player-name-input" type="text" placeholder="Enter your name..." maxlength="20" autocomplete="off" />
+  <div class="mode-buttons">
+    <button class="btn" onclick="startGame('story')">▶ Story Mode</button>
+    <button class="btn blue" onclick="startGame('adventure')">⚔ Adventure</button>
+  </div>
+  <div class="mode-desc" id="mode-desc-text">
+    STORY MODE: Fight every monster in order — from Goblin to Ogre.<br>
+    ADVENTURE MODE: Choose your battle. One monster. One showdown.
+  </div>
+</div>
+
+<!-- ── HUD ── -->
+<div id="hud" class="hidden">
+  <div>
+    <div class="hud-name" id="hud-player-name">HERO</div>
+    <div class="hud-mode" id="hud-mode-label">STORY MODE</div>
+  </div>
+  <div class="hp-bar-wrap">
+    <span class="hp-label">HP</span>
+    <div class="hp-bar"><div class="hp-fill" id="hud-hp-fill" style="width:100%"></div></div>
+    <span class="hp-text" id="hud-hp-text">100/100</span>
+  </div>
+</div>
+
+<!-- ── MONSTER PROGRESS ── -->
+<div id="monster-progress" class="hidden"></div>
+
+<!-- ── CONTROLS HINT ── -->
+<div id="controls-hint" class="hidden">WASD / ARROW KEYS TO MOVE &nbsp;|&nbsp; E or SPACE to interact</div>
+
+<!-- ── PROXIMITY PROMPT ── -->
+<div id="proximity-prompt">
+  <div class="prox-monster-name" id="prox-name">BUG BEAST</div>
+  <div class="prox-diff" id="prox-diff">Difficulty: Medium &nbsp;|&nbsp; Attack: 8</div>
+  <div class="prox-actions">
+    <button class="btn" onclick="enterBattle()">⚔ Fight</button>
+    <button class="btn red" onclick="closePrompt()">✗ Retreat</button>
+  </div>
+</div>
+
+<!-- ── COMBAT SCREEN ── -->
+<div id="combat-screen" class="screen hidden">
+  <div class="combat-layout">
+    <!-- Player side -->
+    <div class="combatant">
+      <div class="combatant-label">PLAYER</div>
+      <canvas id="player-mini-canvas" width="140" height="140"></canvas>
+      <div class="combatant-name" id="combat-player-name">HERO</div>
+      <div class="combatant-hp-bar">
+        <div class="combatant-hp-fill" id="combat-player-hp" style="width:100%"></div>
+      </div>
+    </div>
+
+    <!-- VS + progress -->
+    <div class="vs-col">
+      <div class="vs-text">VS</div>
+      <div class="correct-counter" id="correct-counter">0 / 5 answered</div>
+    </div>
+
+    <!-- Monster side -->
+    <div class="combatant">
+      <div class="combatant-label">ENEMY</div>
+      <canvas id="monster-mini-canvas" width="140" height="140"></canvas>
+      <div class="combatant-name" id="combat-monster-name">BUG BEAST</div>
+      <div class="combatant-hp-bar">
+        <div class="combatant-hp-fill" id="combat-monster-hp" style="width:100%; background: var(--yellow);"></div>
+      </div>
+    </div>
+
+    <!-- Question -->
+    <div class="question-panel">
+      <div class="q-difficulty" id="q-difficulty">EASY</div>
+      <div class="q-text" id="q-text">Loading question...</div>
+      <div class="answer-row">
+        <input class="answer-input" id="answer-input" type="text" placeholder="Type your answer and press Enter..." autocomplete="off" />
+        <button class="btn" onclick="submitAnswer()">Submit</button>
+        <button class="btn red" onclick="fleeBattle()" style="font-size:9px">Flee</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── FEEDBACK TOAST ── -->
+<div id="feedback-toast"></div>
+
+<!-- ── GAME OVER ── -->
+<div id="gameover-screen" class="screen hidden">
+  <div class="gameover-title" id="gameover-title">GAME OVER</div>
+  <div class="gameover-sub" id="gameover-sub"></div>
+  <button class="btn" onclick="returnToMenu()">↩ Play Again</button>
+</div>
+
+<!-- Three.js CDN -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<script>
+// ════════════════════════════════════════════════
+//  GAME STATE
+// ════════════════════════════════════════════════
+const State = {
+  screen: 'menu',   // menu | world | combat | gameover
+  player: null,
+  monsters: [],
+  mode: 'story',
+  currentBattleMonster: null,
+  nearbyMonster: null,
+};
+
+// ════════════════════════════════════════════════
+//  THREE.JS WORLD
+// ════════════════════════════════════════════════
+let worldRenderer, worldScene, worldCamera;
+let playerMesh, monsterMeshes = [];
+const keys = {};
+const PLAYER_SPEED = 0.12;
+const WORLD_SIZE = 40;
+
+// Monster positions in the world (fixed layout)
+const MONSTER_SPAWN_POSITIONS = [
+  { x: -14, z: -12 },
+  { x: 10,  z: -16 },
+  { x: 16,  z: 4   },
+  { x: -6,  z: 14  },
+  { x: -16, z: 4   },
+];
+
+const MONSTER_COLORS = [0x44ff88, 0xff6644, 0x4488ff, 0xaa44ff, 0xff4466];
+const DIFF_COLOR = { 'Easy': '#00ff88', 'Easy Medium': '#88ff44', 'Medium': '#ffcc00', 'Medium Hard': '#ff8844', 'Hard': '#ff3355' };
+
+function initWorld() {
+  const canvas = document.getElementById('game-canvas');
+  worldRenderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+  worldRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  worldRenderer.setSize(window.innerWidth, window.innerHeight);
+  worldRenderer.shadowMap.enabled = true;
+  worldRenderer.setClearColor(0x050a0e);
+
+  worldScene = new THREE.Scene();
+  worldScene.fog = new THREE.Fog(0x050a0e, 30, 60);
+
+  worldCamera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200);
+  worldCamera.position.set(0, 18, 14);
+  worldCamera.lookAt(0, 0, 0);
+
+  // Lighting
+  const ambient = new THREE.AmbientLight(0x00ff88, 0.25);
+  worldScene.add(ambient);
+
+  const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+  sun.position.set(10, 20, 10);
+  sun.castShadow = true;
+  worldScene.add(sun);
+
+  const glow = new THREE.PointLight(0x00ff88, 1.2, 25);
+  glow.position.set(0, 3, 0);
+  worldScene.add(glow);
+
+  // Floor - tiled grid
+  const floorGeo = new THREE.PlaneGeometry(WORLD_SIZE*2, WORLD_SIZE*2, 40, 40);
+  const floorMat = new THREE.MeshLambertMaterial({ color: 0x061408, wireframe: false });
+  const floor = new THREE.Mesh(floorGeo, floorMat);
+  floor.rotation.x = -Math.PI / 2;
+  floor.receiveShadow = true;
+  worldScene.add(floor);
+
+  // Grid lines
+  const gridHelper = new THREE.GridHelper(WORLD_SIZE*2, 40, 0x003311, 0x002208);
+  worldScene.add(gridHelper);
+
+  // Boundary walls
+  buildWalls();
+
+  // Decorative pillars
+  buildPillars();
+
+  // Player character
+  buildPlayer();
+
+  // Input
+  document.addEventListener('keydown', e => keys[e.code] = true);
+  document.addEventListener('keyup', e => keys[e.code] = false);
+
+  // Resize
+  window.addEventListener('resize', () => {
+    worldCamera.aspect = window.innerWidth / window.innerHeight;
+    worldCamera.updateProjectionMatrix();
+    worldRenderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  worldLoop();
+}
+
+function buildWalls() {
+  const wallMat = new THREE.MeshLambertMaterial({ color: 0x0a2010 });
+  const wallH = 3;
+  const wallPairs = [
+    [WORLD_SIZE, 0,      WORLD_SIZE*2, wallH, 0.4],
+    [-WORLD_SIZE, 0,     WORLD_SIZE*2, wallH, 0.4],
+    [0, WORLD_SIZE,      0.4, wallH, WORLD_SIZE*2],
+    [0, -WORLD_SIZE,     0.4, wallH, WORLD_SIZE*2],
+  ];
+  wallPairs.forEach(([x, z, w, h, d]) => {
+    const geo = new THREE.BoxGeometry(w, h, d);
+    const mesh = new THREE.Mesh(geo, wallMat);
+    mesh.position.set(x, h/2, z);
+    worldScene.add(mesh);
+  });
+}
+
+function buildPillars() {
+  const pillarMat = new THREE.MeshLambertMaterial({ color: 0x112211 });
+  const pillarPositions = [
+    [-18,-18],[18,-18],[-18,18],[18,18],
+    [-8,-8],[8,-8],[-8,8],[8,8],
+    [0,-18],[0,18],[-18,0],[18,0],
+  ];
+  pillarPositions.forEach(([x, z]) => {
+    const geo = new THREE.CylinderGeometry(0.4, 0.5, 5, 8);
+    const mesh = new THREE.Mesh(geo, pillarMat);
+    mesh.position.set(x, 2.5, z);
+    mesh.castShadow = true;
+    worldScene.add(mesh);
+
+    // top gem
+    const gemGeo = new THREE.OctahedronGeometry(0.35);
+    const gemMat = new THREE.MeshLambertMaterial({ color: 0x00ff88, emissive: 0x004422 });
+    const gem = new THREE.Mesh(gemGeo, gemMat);
+    gem.position.set(x, 5.5, z);
+    worldScene.add(gem);
+  });
+}
+
+function buildPlayer() {
+  // Simple humanoid from primitive shapes
+  const group = new THREE.Group();
+
+  // Body
+  const bodyGeo = new THREE.BoxGeometry(0.7, 1, 0.4);
+  const bodyMat = new THREE.MeshLambertMaterial({ color: 0x2244aa });
+  const body = new THREE.Mesh(bodyGeo, bodyMat);
+  body.position.y = 1.1;
+  group.add(body);
+
+  // Head
+  const headGeo = new THREE.BoxGeometry(0.55, 0.55, 0.55);
+  const headMat = new THREE.MeshLambertMaterial({ color: 0xffcc88 });
+  const head = new THREE.Mesh(headGeo, headMat);
+  head.position.y = 1.85;
+  group.add(head);
+
+  // Legs
+  [-0.18, 0.18].forEach((xOff, i) => {
+    const legGeo = new THREE.BoxGeometry(0.28, 0.8, 0.28);
+    const legMat = new THREE.MeshLambertMaterial({ color: 0x223388 });
+    const leg = new THREE.Mesh(legGeo, legMat);
+    leg.position.set(xOff, 0.4, 0);
+    leg.name = 'leg_' + i;
+    group.add(leg);
+  });
+
+  // Arms
+  [-0.55, 0.55].forEach((xOff) => {
+    const armGeo = new THREE.BoxGeometry(0.22, 0.7, 0.22);
+    const armMat = new THREE.MeshLambertMaterial({ color: 0x2244aa });
+    const arm = new THREE.Mesh(armGeo, armMat);
+    arm.position.set(xOff, 1.0, 0);
+    group.add(arm);
+  });
+
+  // Sword
+  const swordGeo = new THREE.BoxGeometry(0.08, 0.8, 0.08);
+  const swordMat = new THREE.MeshLambertMaterial({ color: 0xaaddff, emissive: 0x224466 });
+  const sword = new THREE.Mesh(swordGeo, swordMat);
+  sword.position.set(0.72, 1.4, 0);
+  group.add(sword);
+
+  group.castShadow = true;
+  worldScene.add(group);
+  playerMesh = group;
+  playerMesh._walkTime = 0;
+}
+
+function buildMonsterMesh(monster, idx) {
+  const group = new THREE.Group();
+  const color = MONSTER_COLORS[idx % MONSTER_COLORS.length];
+  const mat = new THREE.MeshLambertMaterial({ color, emissive: new THREE.Color(color).multiplyScalar(0.15) });
+
+  // Different shapes per difficulty tier
+  const tier = idx;
+
+  // Body
+  let bodyGeo;
+  if (tier <= 1) bodyGeo = new THREE.BoxGeometry(0.9, 1.1, 0.6);
+  else if (tier === 2) bodyGeo = new THREE.SphereGeometry(0.55, 8, 6);
+  else if (tier === 3) bodyGeo = new THREE.ConeGeometry(0.55, 1.2, 6);
+  else bodyGeo = new THREE.BoxGeometry(1.1, 1.4, 0.8);
+
+  const body = new THREE.Mesh(bodyGeo, mat);
+  body.position.y = 1.2;
+  group.add(body);
+
+  // Head
+  const headGeo = new THREE.SphereGeometry(0.38, 8, 6);
+  const headMat = new THREE.MeshLambertMaterial({ color, emissive: new THREE.Color(color).multiplyScalar(0.3) });
+  const head = new THREE.Mesh(headGeo, headMat);
+  head.position.y = tier === 3 ? 2.1 : 2.0;
+  group.add(head);
+
+  // Eyes (glowing)
+  [-0.14, 0.14].forEach(xOff => {
+    const eyeGeo = new THREE.SphereGeometry(0.08, 6, 4);
+    const eyeMat = new THREE.MeshLambertMaterial({ color: 0xff2222, emissive: 0xff0000 });
+    const eye = new THREE.Mesh(eyeGeo, eyeMat);
+    eye.position.set(xOff, tier === 3 ? 2.15 : 2.06, 0.33);
+    group.add(eye);
+  });
+
+  // Floating orb above big monsters
+  if (tier >= 3) {
+    const orbGeo = new THREE.OctahedronGeometry(0.3);
+    const orbMat = new THREE.MeshLambertMaterial({ color, emissive: new THREE.Color(color).multiplyScalar(0.5) });
+    const orb = new THREE.Mesh(orbGeo, orbMat);
+    orb.position.y = 3.0;
+    orb.name = 'orb';
+    group.add(orb);
+  }
+
+  const pos = MONSTER_SPAWN_POSITIONS[idx];
+  group.position.set(pos.x, 0, pos.z);
+  group._bobTime = Math.random() * Math.PI * 2;
+  group._baseY = 0;
+  group._monsterId = idx;
+  group._defeated = false;
+
+  // Name floating label (we'll draw proximity hints in UI instead)
+  worldScene.add(group);
+  return group;
+}
+
+function spawnMonsters() {
+  monsterMeshes = [];
+  State.monsters.forEach((m, i) => {
+    const mesh = buildMonsterMesh(m, i);
+    monsterMeshes.push(mesh);
+  });
+}
+
+let _walkCycle = 0;
+function worldLoop() {
+  requestAnimationFrame(worldLoop);
+  if (State.screen !== 'world') return;
+
+  const dt = 1;
+  _walkCycle += 0.08;
+
+  // Player movement
+  let dx = 0, dz = 0;
+  if (keys['KeyW'] || keys['ArrowUp'])    dz -= PLAYER_SPEED;
+  if (keys['KeyS'] || keys['ArrowDown'])  dz += PLAYER_SPEED;
+  if (keys['KeyA'] || keys['ArrowLeft'])  dx -= PLAYER_SPEED;
+  if (keys['KeyD'] || keys['ArrowRight']) dx += PLAYER_SPEED;
+
+  const moving = dx !== 0 || dz !== 0;
+  if (moving) {
+    const newX = playerMesh.position.x + dx;
+    const newZ = playerMesh.position.z + dz;
+    const bound = WORLD_SIZE - 1.5;
+    playerMesh.position.x = Math.max(-bound, Math.min(bound, newX));
+    playerMesh.position.z = Math.max(-bound, Math.min(bound, newZ));
+
+    // Face direction
+    if (dx !== 0 || dz !== 0) {
+      playerMesh.rotation.y = Math.atan2(dx, dz);
+    }
+
+    // Walk animation
+    playerMesh.children.forEach(c => {
+      if (c.name === 'leg_0') c.rotation.x = Math.sin(_walkCycle) * 0.5;
+      if (c.name === 'leg_1') c.rotation.x = -Math.sin(_walkCycle) * 0.5;
+    });
+  }
+
+  // Camera follow
+  const camTarget = new THREE.Vector3(
+    playerMesh.position.x * 0.3,
+    18,
+    playerMesh.position.z * 0.3 + 14
+  );
+  worldCamera.position.lerp(camTarget, 0.05);
+  worldCamera.lookAt(playerMesh.position);
+
+  // Monster animations
+  monsterMeshes.forEach((m, i) => {
+    if (m._defeated) return;
+    m._bobTime += 0.03;
+    m.position.y = m._baseY + Math.sin(m._bobTime) * 0.15;
+    m.rotation.y += 0.015;
+    const orb = m.children.find(c => c.name === 'orb');
+    if (orb) orb.rotation.y += 0.05;
+  });
+
+  // Proximity detection
+  checkProximity();
+
+  // E/Space to interact
+  if ((keys['KeyE'] || keys['Space']) && State.nearbyMonster !== null) {
+    const m = State.monsters[State.nearbyMonster];
+    if (!State.defeatedSet?.has(State.nearbyMonster)) {
+      keys['KeyE'] = false; keys['Space'] = false;
+      enterBattle();
+    }
+  }
+
+  worldRenderer.render(worldScene, worldCamera);
+}
+
+function checkProximity() {
+  const px = playerMesh.position.x;
+  const pz = playerMesh.position.z;
+  const PROX_DIST = 5;
+  let found = null;
+
+  monsterMeshes.forEach((m, i) => {
+    if (m._defeated) return;
+    const dx = m.position.x - px;
+    const dz = m.position.z - pz;
+    const dist = Math.sqrt(dx*dx + dz*dz);
+    if (dist < PROX_DIST) found = i;
+  });
+
+  if (found !== State.nearbyMonster) {
+    State.nearbyMonster = found;
+    const prompt = document.getElementById('proximity-prompt');
+    if (found !== null) {
+      const mon = State.monsters[found];
+      document.getElementById('prox-name').textContent = mon.name.toUpperCase();
+      document.getElementById('prox-diff').textContent =
+        `Difficulty: ${mon.difficulty}  |  Attack: ${mon.attack} damage/wrong answer`;
+      prompt.classList.add('visible');
+    } else {
+      prompt.classList.remove('visible');
+    }
+  }
+}
+
+// ════════════════════════════════════════════════
+//  MINI RENDERERS for combat portraits
+// ════════════════════════════════════════════════
+let playerMiniR, monsterMiniR;
+
+function initMiniRenderers() {
+  // Player mini
+  const pc = document.getElementById('player-mini-canvas');
+  playerMiniR = buildMiniRenderer(pc, 'player');
+
+  // Monster mini
+  const mc = document.getElementById('monster-mini-canvas');
+  monsterMiniR = buildMiniRenderer(mc, 'monster');
+}
+
+function buildMiniRenderer(canvas, type) {
+  const r = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  r.setSize(140, 140);
+  r.setClearColor(0x000000, 0);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 50);
+  camera.position.set(0, 2, 4);
+  camera.lookAt(0, 1.2, 0);
+
+  const ambL = new THREE.AmbientLight(0xffffff, 0.5);
+  scene.add(ambL);
+  const dirL = new THREE.DirectionalLight(0x00ff88, 1.2);
+  dirL.position.set(2, 5, 3);
+  scene.add(dirL);
+
+  let mesh = null;
+  if (type === 'player') {
+    mesh = buildSimplePlayer();
+  }
+  if (mesh) scene.add(mesh);
+
+  return { r, scene, camera, mesh, type };
+}
+
+function buildSimplePlayer() {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshLambertMaterial({ color: 0x2244aa });
+  const bodyGeo = new THREE.BoxGeometry(0.7, 1, 0.4);
+  g.add(Object.assign(new THREE.Mesh(bodyGeo, mat), { position: new THREE.Vector3(0,1.1,0) }));
+  const hMat = new THREE.MeshLambertMaterial({ color: 0xffcc88 });
+  const hGeo = new THREE.BoxGeometry(0.55,0.55,0.55);
+  g.add(Object.assign(new THREE.Mesh(hGeo, hMat), { position: new THREE.Vector3(0,1.85,0) }));
+  return g;
+}
+
+function buildSimpleMonster(idx) {
+  const color = MONSTER_COLORS[idx % MONSTER_COLORS.length];
+  const mat = new THREE.MeshLambertMaterial({ color, emissive: new THREE.Color(color).multiplyScalar(0.2) });
+  const g = new THREE.Group();
+  const bGeo = new THREE.BoxGeometry(0.9, 1.1, 0.6);
+  g.add(Object.assign(new THREE.Mesh(bGeo, mat), { position: new THREE.Vector3(0,1.1,0) }));
+  const hGeo = new THREE.SphereGeometry(0.38, 8, 6);
+  const hMat = new THREE.MeshLambertMaterial({ color, emissive: new THREE.Color(color).multiplyScalar(0.3) });
+  g.add(Object.assign(new THREE.Mesh(hGeo, hMat), { position: new THREE.Vector3(0,2.0,0) }));
+  return g;
+}
+
+let miniAnimFrame;
+function startMiniAnimation() {
+  let t = 0;
+  function loop() {
+    miniAnimFrame = requestAnimationFrame(loop);
+    t += 0.04;
+    if (playerMiniR.mesh) { playerMiniR.mesh.rotation.y = Math.sin(t)*0.4; }
+    if (monsterMiniR.mesh) { monsterMiniR.mesh.rotation.y = -Math.sin(t)*0.5 + Math.PI; }
+    playerMiniR.r.render(playerMiniR.scene, playerMiniR.camera);
+    monsterMiniR.r.render(monsterMiniR.scene, monsterMiniR.camera);
+  }
+  loop();
+}
+function stopMiniAnimation() {
+  if (miniAnimFrame) cancelAnimationFrame(miniAnimFrame);
+}
+
+// ════════════════════════════════════════════════
+//  API HELPERS
+// ════════════════════════════════════════════════
+async function api(path, body) {
+  const opts = body
+    ? { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }
+    : { method:'GET' };
+  const r = await fetch('/api' + path, opts);
+  return r.json();
+}
+
+// ════════════════════════════════════════════════
+//  GAME FLOW
+// ════════════════════════════════════════════════
+async function startGame(mode) {
+  const nameInput = document.getElementById('player-name-input');
+  const name = nameInput.value.trim() || 'Hero';
+
+  const data = await api('/start', { name, mode });
+  if (!data.ok) return;
+
+  State.player = data.player;
+  State.monsters = data.monsters;
+  State.mode = mode;
+  State.defeatedSet = new Set();
+  State.currentBattleMonster = null;
+  State.nearbyMonster = null;
+
+  // Update HUD
+  document.getElementById('hud-player-name').textContent = name.toUpperCase();
+  document.getElementById('hud-mode-label').textContent = mode === 'story' ? 'STORY MODE' : 'ADVENTURE MODE';
+  updateHpBar(100, 100);
+
+  // Build monster progress
+  buildProgressPanel();
+
+  // Show world
+  showScreen('world');
+  document.getElementById('hud').classList.remove('hidden');
+  document.getElementById('controls-hint').classList.remove('hidden');
+  document.getElementById('monster-progress').classList.remove('hidden');
+
+  // Spawn monsters in 3D world
+  // Clear old
+  monsterMeshes.forEach(m => worldScene.remove(m));
+  monsterMeshes = [];
+  spawnMonsters();
+
+  // Reset player position
+  playerMesh.position.set(0, 0, 0);
+}
+
+function buildProgressPanel() {
+  const panel = document.getElementById('monster-progress');
+  panel.innerHTML = '';
+  State.monsters.forEach((m, i) => {
+    const div = document.createElement('div');
+    div.className = 'prog-item';
+    div.id = 'prog-' + i;
+    div.innerHTML = `<span>${m.name}</span><span class="prog-dot"></span>`;
+    panel.appendChild(div);
+  });
+}
+
+function markMonsterDefeated(id) {
+  State.defeatedSet.add(id);
+  State.monsters[id].defeated = true;
+  monsterMeshes[id]._defeated = true;
+
+  // Sink the monster into the ground
+  const mesh = monsterMeshes[id];
+  let sinkY = 0;
+  const sink = setInterval(() => {
+    sinkY -= 0.08;
+    mesh.position.y = sinkY;
+    if (sinkY <= -3) { clearInterval(sink); worldScene.remove(mesh); }
+  }, 30);
+
+  // Progress panel
+  const item = document.getElementById('prog-' + id);
+  if (item) item.classList.add('defeated');
+}
+
+function showScreen(name) {
+  State.screen = name;
+  ['menu-screen','combat-screen','gameover-screen'].forEach(id => {
+    const el = document.getElementById(id);
+    if (id === name + '-screen') {
+      el.classList.remove('hidden');
+    } else {
+      el.classList.add('hidden');
+    }
+  });
+
+  // World = no overlay screen
+  if (name === 'world') {
+    document.getElementById('combat-screen').classList.add('hidden');
+    document.getElementById('gameover-screen').classList.add('hidden');
+    document.getElementById('menu-screen').classList.add('hidden');
+  }
+}
+
+// ── PROXIMITY / BATTLE ──
+function closePrompt() {
+  document.getElementById('proximity-prompt').classList.remove('visible');
+}
+
+async function enterBattle() {
+  const id = State.nearbyMonster;
+  if (id === null) return;
+  if (State.defeatedSet?.has(id)) return;
+
+  closePrompt();
+
+  const data = await api('/battle/start', { monster_id: id });
+  if (!data.ok) { alert(data.error); return; }
+
+  State.currentBattleMonster = data.monster;
+  State.currentBattle = data;
+
+  // Update combat UI
+  document.getElementById('combat-player-name').textContent = State.player.name.toUpperCase();
+  document.getElementById('combat-monster-name').textContent = data.monster.name.toUpperCase();
+  document.getElementById('q-difficulty').textContent = 'DIFFICULTY: ' + data.monster.difficulty.toUpperCase();
+  document.getElementById('q-text').textContent = data.question.prompt;
+  updateCombatBars(data.player_health, 0, data.correct_answers, data.required_correct);
+  document.getElementById('correct-counter').textContent = `${data.correct_answers} / ${data.required_correct} correct`;
+
+  // Monster mini portrait
+  if (monsterMiniR.mesh) monsterMiniR.scene.remove(monsterMiniR.mesh);
+  const idx = id;
+  monsterMiniR.mesh = buildSimpleMonster(idx);
+  monsterMiniR.scene.add(monsterMiniR.mesh);
+
+  showScreen('combat');
+  startMiniAnimation();
+
+  const input = document.getElementById('answer-input');
+  input.value = '';
+  input.focus();
+}
+
+document.getElementById('answer-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') submitAnswer();
+});
+
+async function submitAnswer() {
+  const input = document.getElementById('answer-input');
+  const answer = input.value.trim();
+  if (!answer) return;
+  input.value = '';
+
+  const data = await api('/battle/answer', { answer });
+  if (!data.ok) return;
+
+  // Feedback toast
+  showFeedback(data.feedback);
+
+  // Update bars
+  updateCombatBars(data.player_health, data.correct_answers, data.correct_answers, data.required_correct);
+  document.getElementById('correct-counter').textContent = `${data.correct_answers} / ${data.required_correct} correct`;
+
+  // Update world HP bar
+  updateHpBar(data.player_health, 100);
+
+  if (data.battle_over) {
+    stopMiniAnimation();
+    setTimeout(() => {
+      if (data.battle_won) {
+        markMonsterDefeated(State.nearbyMonster);
+      }
+      if (data.game_over) {
+        showGameOver(data.game_won);
+      } else {
+        showScreen('world');
+        State.nearbyMonster = null;
+        document.getElementById('proximity-prompt').classList.remove('visible');
+        input.focus();
+      }
+    }, 1800);
+  } else if (data.next_question) {
+    setTimeout(() => {
+      document.getElementById('q-text').textContent = data.next_question.prompt;
+      input.focus();
+    }, 1200);
+  }
+}
+
+async function fleeBattle() {
+  await api('/battle/flee', {});
+  stopMiniAnimation();
+  showScreen('world');
+  State.nearbyMonster = null;
+  document.getElementById('proximity-prompt').classList.remove('visible');
+}
+
+function showGameOver(won) {
+  const title = document.getElementById('gameover-title');
+  const sub = document.getElementById('gameover-sub');
+  title.textContent = won ? 'VICTORY!' : 'DEFEATED';
+  title.className = 'gameover-title ' + (won ? 'win' : 'lose');
+  sub.textContent = won
+    ? `${State.player.name} conquered the C++ dungeon!`
+    : `${State.player.name} was defeated in battle.`;
+  showScreen('gameover');
+}
+
+function returnToMenu() {
+  showScreen('menu');
+  document.getElementById('hud').classList.add('hidden');
+  document.getElementById('controls-hint').classList.add('hidden');
+  document.getElementById('monster-progress').classList.add('hidden');
+}
+
+// ════════════════════════════════════════════════
+//  UI HELPERS
+// ════════════════════════════════════════════════
+function updateHpBar(hp, maxHp = 100) {
+  const pct = Math.max(0, Math.min(100, (hp / maxHp) * 100));
+  document.getElementById('hud-hp-fill').style.width = pct + '%';
+  document.getElementById('hud-hp-text').textContent = `${hp}/${maxHp}`;
+}
+
+function updateCombatBars(playerHp, monsterHpProgress, correct, required) {
+  const playerPct = Math.max(0, (playerHp / 100) * 100);
+  document.getElementById('combat-player-hp').style.width = playerPct + '%';
+  // Monster bar = inverse of correct answers
+  const monsterPct = Math.max(0, ((required - correct) / required) * 100);
+  document.getElementById('combat-monster-hp').style.width = monsterPct + '%';
+}
+
+let feedbackTimer;
+function showFeedback(feedback) {
+  const toast = document.getElementById('feedback-toast');
+  toast.textContent = feedback.message;
+  toast.className = 'visible ' + (feedback.correct ? 'correct' : 'wrong');
+  clearTimeout(feedbackTimer);
+  feedbackTimer = setTimeout(() => toast.classList.remove('visible'), 1800);
+}
+
+// ════════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════════
+window.addEventListener('load', () => {
+  initWorld();
+  initMiniRenderers();
+});
+</script>
+</body>
+</html>
