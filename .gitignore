@@ -7,3 +7,4 @@ __MACOSX/
 # Local backups
 *.backup.jsx
 *.backup.py
+*.original.jsx
