@@ -1,22 +1,42 @@
 /* =============================================================================
-   App.jsx
-   The entire C++ Quest Academy React application.
+   App.jsx — C++ Quest Academy
+   =============================================================================
 
-   STRUCTURE:
-     Hooks & state  — all game state lives in the top-level <App> component
-     Three.js setup — world scene, player mesh, monster meshes, portraits
-     API helpers    — thin fetch() wrappers that talk to the Flask backend
-     Game flow      — startGame, enterBattle, submitAnswer, flee, gameOver
-     Components     — MenuScreen, HUD, ProximityPrompt, AdventureScreen,
-                      CombatScreen, FeedbackToast, GameOverScreen
+   ROOT PROBLEMS FIXED vs. previous version:
+   ------------------------------------------
+   1. STALE CLOSURE BUG (E key did nothing):
+      The keydown handler closed over a stale `triggerBattle` reference
+      because useEffect deps were incomplete.  Fix: store triggerBattle in a
+      ref (triggerBattleRef) so the keydown handler always calls the latest
+      version without needing to be re-registered.
 
-   HOW SCREENS WORK:
-     A single `screen` state string controls what's visible:
-       'menu'      → MenuScreen overlay + Three.js background
-       'world'     → HUD + ProximityPrompt + Three.js (no overlay)
-       'adventure' → AdventureScreen overlay (no Three.js world needed)
-       'combat'    → CombatScreen overlay + portrait mini-renderers
-       'gameover'  → GameOverScreen overlay
+   2. WRONG API FIELD NAME:
+      submitAnswer was reading `data.correct` (undefined).
+      The backend returns `data.feedback.correct`.  Fixed throughout.
+
+   3. STORY MODE ORDER:
+      Monsters now spawn along a lit-up path in sequential order (0→4).
+      Non-next monsters are dimmed and cannot be interacted with.
+      A glowing arrow/marker hovers over the next target.
+
+   4. QUESTION COUNT:
+      Changed from 3 → 5 questions per battle to match new backend.
+
+   SCREENS:
+     'menu'          → title / mode select
+     'world'         → 3D dungeon, WASD to move, E/Space to interact
+     'battle'        → Pokémon-style battle overlay
+     'gameover-win'  → victory screen
+     'gameover-lose' → defeat screen
+
+   STORY MODE WORLD:
+     • Monsters are placed along a winding lit path.
+     • The current target glows and has a pulsing "!" marker above it.
+     • All other undefeated monsters are dimmed (grey) and cannot be fought.
+     • Defeated monsters sink into the floor.
+
+   ADVENTURE MODE WORLD:
+     • All monsters are active and can be fought in any order.
    ============================================================================= */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
@@ -27,25 +47,26 @@ import './App.css';
    CONSTANTS
    ============================================================================= */
 
-// Fixed spawn positions for the 5 monsters in the 3D world
+// Monster spawn positions — laid out as a winding path so story mode
+// has a natural left-to-right / forward progression the player follows.
 const SPAWN_POS = [
-  { x: -12, z: -10 },
-  { x:  11, z: -14 },
-  { x:  14, z:   5 },
-  { x:  -5, z:  13 },
-  { x: -14, z:   3 },
+  { x: -14, z:  12 },   // 0 Goblin Coder    — start (near player spawn)
+  { x:  -6, z:   4 },   // 1 Bug Beast
+  { x:   4, z:  -2 },   // 2 Syntax Snake
+  { x:  12, z: -10 },   // 3 Pointer Phantom
+  { x:  18, z: -18 },   // 4 Segmentation Ogre — end
 ];
 
-// One colour per monster (indexed 0–4)
-const MONSTER_COLORS = [0x44ff88, 0xff6644, 0x44aaff, 0xbb44ff, 0xff4466];
+// Player starting position (near monster 0 but not on top of it)
+const PLAYER_START = { x: -14, z: 18 };
 
-// Player walk speed (units per frame)
-const WALK_SPEED = 0.13;
+// One colour per monster, used for both the 3D mesh and UI accents
+const MONSTER_COLORS = [0x44ff88, 0xff9944, 0x44aaff, 0xbb44ff, 0xff4466];
 
-// Distance at which the proximity prompt appears
-const INTERACT_DIST = 5;
+const WALK_SPEED    = 0.13;   // units per frame
+const INTERACT_DIST = 5.0;    // units — proximity trigger distance
 
-// Maps difficulty string → CSS class for colour coding
+// Difficulty string → CSS colour class
 const DIFF_CLASS = {
   'Easy':        'diff-easy',
   'Easy Medium': 'diff-easy-medium',
@@ -54,18 +75,15 @@ const DIFF_CLASS = {
   'Hard':        'diff-hard',
 };
 
-
 /* =============================================================================
    THREE.JS BUILDER FUNCTIONS
-   These live outside React components so they don't get re-created on
-   every render. They return THREE.js objects that we store in refs.
+   Defined outside React so they are never re-created on re-renders.
    ============================================================================= */
 
 /**
  * buildPlayerMesh()
- * Assembles the player character from primitive boxes:
- *   head, body, two arms, two legs (animated), sword
- * Returns a THREE.Group.
+ * Simple humanoid from primitive boxes.
+ * Legs named 'leg_0' / 'leg_1' so the walk loop can rotate them.
  */
 function buildPlayerMesh() {
   const g        = new THREE.Group();
@@ -73,24 +91,20 @@ function buildPlayerMesh() {
   const skinMat  = new THREE.MeshLambertMaterial({ color: 0xfbbf7a });
   const swordMat = new THREE.MeshLambertMaterial({ color: 0xbfdbfe, emissive: 0x1e3a8a });
 
-  // Head
   const head = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.52, 0.52), skinMat);
   head.position.y = 1.88;
   g.add(head);
 
-  // Body
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.95, 0.38), bodyMat);
   body.position.y = 1.12;
   g.add(body);
 
-  // Arms (left and right)
   [-0.52, 0.52].forEach(x => {
     const arm = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.65, 0.20), bodyMat);
     arm.position.set(x, 1.05, 0);
     g.add(arm);
   });
 
-  // Legs — named so the walk loop can find and rotate them
   [-0.17, 0.17].forEach((x, i) => {
     const leg = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.75, 0.26), bodyMat);
     leg.position.set(x, 0.38, 0);
@@ -98,7 +112,6 @@ function buildPlayerMesh() {
     g.add(leg);
   });
 
-  // Sword
   const sword = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.72, 0.07), swordMat);
   sword.position.set(0.70, 1.42, 0);
   g.add(sword);
@@ -107,50 +120,46 @@ function buildPlayerMesh() {
 }
 
 /**
- * buildMonsterMesh(idx)
- * Each monster has a distinct body shape based on its tier (0–4).
- * All share the same glowing-red-eyes detail.
+ * buildMonsterMesh(idx, dimmed)
+ * Each monster has a distinct body shape.
+ * dimmed = true makes the mesh grey (used for locked story-mode monsters).
  */
-function buildMonsterMesh(idx) {
-  const g      = new THREE.Group();
-  const color  = MONSTER_COLORS[idx];
-  const mat    = new THREE.MeshLambertMaterial({
+function buildMonsterMesh(idx, dimmed = false) {
+  const g     = new THREE.Group();
+  const color = dimmed ? 0x334433 : (MONSTER_COLORS[idx] ?? MONSTER_COLORS[0]);
+  const mat   = new THREE.MeshLambertMaterial({
     color,
-    emissive: new THREE.Color(color).multiplyScalar(0.12),
+    emissive: dimmed ? 0x000000 : new THREE.Color(color).multiplyScalar(0.12),
   });
-  const eyeMat = new THREE.MeshLambertMaterial({ color: 0xff2020, emissive: 0x990000 });
+  const eyeColor = dimmed ? 0x223322 : 0xff2020;
+  const eyeMat   = new THREE.MeshLambertMaterial({ color: eyeColor, emissive: dimmed ? 0x000000 : 0x990000 });
 
-  // Body shape varies by monster tier
-  const bodyShapes = [
-    new THREE.BoxGeometry(0.80, 0.95, 0.55),   // 0 Goblin
-    new THREE.BoxGeometry(1.00, 1.10, 0.65),   // 1 Bug Beast
-    new THREE.SphereGeometry(0.52, 8, 6),       // 2 Syntax Snake
-    new THREE.ConeGeometry(0.50, 1.20, 6),      // 3 Pointer Phantom
-    new THREE.BoxGeometry(1.15, 1.40, 0.80),   // 4 Seg Ogre
+  const bodies = [
+    new THREE.BoxGeometry(0.80, 0.95, 0.55),
+    new THREE.BoxGeometry(1.00, 1.10, 0.65),
+    new THREE.SphereGeometry(0.52, 8, 6),
+    new THREE.ConeGeometry(0.50, 1.20, 6),
+    new THREE.BoxGeometry(1.15, 1.40, 0.80),
   ];
-
-  const body = new THREE.Mesh(bodyShapes[idx] || bodyShapes[0], mat);
+  const body = new THREE.Mesh(bodies[idx] ?? bodies[0], mat);
   body.position.y = 1.15;
   g.add(body);
 
-  // Sphere head
   const headMat = new THREE.MeshLambertMaterial({
     color,
-    emissive: new THREE.Color(color).multiplyScalar(0.25),
+    emissive: dimmed ? 0x000000 : new THREE.Color(color).multiplyScalar(0.25),
   });
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.36, 8, 6), headMat);
   head.position.y = 2.05;
   g.add(head);
 
-  // Two glowing red eyes
   [-0.13, 0.13].forEach(x => {
     const eye = new THREE.Mesh(new THREE.SphereGeometry(0.07, 6, 4), eyeMat);
     eye.position.set(x, 2.10, 0.31);
     g.add(eye);
   });
 
-  // Tier 3+ monsters get a floating orb above them
-  if (idx >= 3) {
+  if (idx >= 3 && !dimmed) {
     const orbMat = new THREE.MeshLambertMaterial({
       color,
       emissive: new THREE.Color(color).multiplyScalar(0.45),
@@ -165,42 +174,139 @@ function buildMonsterMesh(idx) {
 }
 
 /**
- * buildPillars(scene)
- * Adds decorative stone pillars with glowing gem tops to the scene.
+ * buildExclamationMarker()
+ * Creates a glowing "!" marker that floats above the next story target.
+ * Returns a THREE.Group.
  */
-function buildPillars(scene) {
+function buildExclamationMarker() {
+  const g   = new THREE.Group();
+  const mat = new THREE.MeshLambertMaterial({ color: 0xffff00, emissive: 0x888800 });
+
+  // Vertical bar of the "!"
+  const bar = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.55, 0.18), mat);
+  bar.position.y = 0.35;
+  g.add(bar);
+
+  // Dot of the "!"
+  const dot = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 0.18), mat);
+  dot.position.y = -0.1;
+  g.add(dot);
+
+  return g;
+}
+
+/**
+ * buildStoryPath(scene)
+ * Draws a glowing path on the floor connecting the spawn positions in order.
+ * Uses thin box segments between each consecutive pair of points.
+ */
+function buildStoryPath(scene) {
+  const pathMat = new THREE.MeshLambertMaterial({
+    color:    0x00ff88,
+    emissive: 0x003311,
+    transparent: true,
+    opacity:  0.45,
+  });
+
+  // Also place small circular "stepping stones" every 1 unit along each segment
+  const stoneMat = new THREE.MeshLambertMaterial({
+    color:    0x00cc66,
+    emissive: 0x002211,
+    transparent: true,
+    opacity: 0.6,
+  });
+
+  const pathObjects = [];
+
+  // Start point — a circle under the player spawn
+  const startCircle = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 0.08, 16), stoneMat);
+  startCircle.position.set(PLAYER_START.x, 0.04, PLAYER_START.z);
+  scene.add(startCircle);
+  pathObjects.push(startCircle);
+
+  // Draw segments between each consecutive monster spawn point
+  // and also include a segment from player start to monster 0
+  const pathPoints = [
+    { x: PLAYER_START.x, z: PLAYER_START.z },
+    ...SPAWN_POS,
+  ];
+
+  for (let i = 0; i < pathPoints.length - 1; i++) {
+    const a = pathPoints[i];
+    const b = pathPoints[i + 1];
+
+    const dx     = b.x - a.x;
+    const dz     = b.z - a.z;
+    const len    = Math.sqrt(dx * dx + dz * dz);
+    const midX   = (a.x + b.x) / 2;
+    const midZ   = (a.z + b.z) / 2;
+    const angle  = Math.atan2(dx, dz);
+
+    // Thin flat box for the path segment
+    const seg = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.06, len), pathMat);
+    seg.position.set(midX, 0.03, midZ);
+    seg.rotation.y = angle;
+    scene.add(seg);
+    pathObjects.push(seg);
+
+    // Stepping stones every 2 units along the segment
+    const steps = Math.floor(len / 2);
+    for (let s = 1; s <= steps; s++) {
+      const t     = s / (steps + 1);
+      const sx    = a.x + dx * t;
+      const sz    = a.z + dz * t;
+      const stone = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.07, 8), stoneMat);
+      stone.position.set(sx, 0.035, sz);
+      scene.add(stone);
+      pathObjects.push(stone);
+    }
+  }
+
+  // Circle under each monster spawn point
+  SPAWN_POS.forEach((pos, i) => {
+    const color   = MONSTER_COLORS[i];
+    const circMat = new THREE.MeshLambertMaterial({
+      color,
+      emissive: new THREE.Color(color).multiplyScalar(0.3),
+      transparent: true,
+      opacity: 0.5,
+    });
+    const circ = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 0.08, 16), circMat);
+    circ.position.set(pos.x, 0.04, pos.z);
+    scene.add(circ);
+    pathObjects.push(circ);
+  });
+
+  // Return all path objects so they can be removed on returnToMenu
+  return pathObjects;
+}
+
+/**
+ * addPillars(scene)
+ * Decorative stone pillars with glowing gem tops.
+ */
+function addPillars(scene) {
   const pillarMat = new THREE.MeshLambertMaterial({ color: 0x0e1f10 });
   const gemMat    = new THREE.MeshLambertMaterial({ color: 0x00ff88, emissive: 0x003322 });
 
-  const positions = [
-    [-18,-18],[18,-18],[-18,18],[18,18],
-    [ -8, -8],[ 8, -8],[-8,  8],[ 8,  8],
-    [  0,-18],[ 0, 18],[-18,  0],[18,  0],
-  ];
-
-  positions.forEach(([x, z]) => {
-    const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.48, 5, 8), pillarMat);
-    pillar.position.set(x, 2.5, z);
-    pillar.castShadow = true;
-    scene.add(pillar);
-
-    const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.3), gemMat);
-    gem.position.set(x, 5.5, z);
-    scene.add(gem);
-  });
+  [[-18,-18],[18,-18],[-18,18],[18,18],
+   [-8,-8],[8,-8],[-8,8],[8,8],
+   [0,-20],[0,20],[-20,0],[20,0]]
+    .forEach(([x, z]) => {
+      const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.48, 5, 8), pillarMat);
+      pillar.position.set(x, 2.5, z);
+      scene.add(pillar);
+      const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.3), gemMat);
+      gem.position.set(x, 5.5, z);
+      scene.add(gem);
+    });
 }
 
-
 /* =============================================================================
-   API HELPERS
+   API HELPER
+   Vite proxies /api/* → Flask on port 5000 (configured in vite.config.js).
    ============================================================================= */
 
-/**
- * apiPost(path, body)
- * POST JSON to /api<path> on the Flask backend and return parsed response.
- * The Flask server runs on the same host (localhost:5000 in dev) so no
- * CORS issues — Vite proxies /api/* to Flask (configured in vite.config.js).
- */
 async function apiPost(path, body = {}) {
   const res = await fetch(`/api${path}`, {
     method:  'POST',
@@ -210,85 +316,88 @@ async function apiPost(path, body = {}) {
   return res.json();
 }
 
-
 /* =============================================================================
    ROOT APP COMPONENT
    ============================================================================= */
 
 export default function App() {
 
-  /* ── Game state ──────────────────────────────────────────────────────────── */
-  const [screen,      setScreen]      = useState('menu');   // current screen
-  const [playerName,  setPlayerName]  = useState('Hero');   // from menu input
-  const [playerHP,    setPlayerHP]    = useState(100);      // live HP value
-  const [mode,        setMode]        = useState('story');  // 'story'|'adventure'
-  const [monsters,    setMonsters]    = useState([]);       // from API
+  /* ── React state ─────────────────────────────────────────────────────────── */
+
+  const [screen,      setScreen]      = useState('menu');
+  const [playerName,  setPlayerName]  = useState('');
+  const [playerHP,    setPlayerHP]    = useState(100);
+  const [mode,        setMode]        = useState('story');
+  const [monsters,    setMonsters]    = useState([]);
   const [defeatedIds, setDefeatedIds] = useState(new Set());
+  const [nextStoryId, setNextStoryId] = useState(0);
 
-  // Combat-specific state
-  const [battleMonster,   setBattleMonster]   = useState(null);  // monster object
-  const [question,        setQuestion]        = useState(null);  // { prompt, number, total }
-  const [correctAnswers,  setCorrectAnswers]  = useState(0);
-  const [requiredCorrect, setRequiredCorrect] = useState(5);
-  const [answerValue,     setAnswerValue]     = useState('');
-  const [answerDisabled,  setAnswerDisabled]  = useState(false);
+  // Which monster the player is standing next to (object | null)
+  const [nearbyMonster, setNearbyMonster] = useState(null);
 
-  // Proximity prompt state
-  const [nearbyMonster, setNearbyMonster] = useState(null); // monster object or null
+  // Battle state
+  const [battleMonster, setBattleMonster] = useState(null);
+  const [question,      setQuestion]      = useState(null);
+  const [correctCount,  setCorrectCount]  = useState(0);
+  const [answerValue,   setAnswerValue]   = useState('');
+  const [answerLocked,  setAnswerLocked]  = useState(false);
+  const [feedback,      setFeedback]      = useState({ msg: '', type: 'correct', show: false });
 
-  // Feedback toast state
-  const [toast, setToast] = useState({ visible: false, message: '', correct: true });
+  /* ── Three.js refs ───────────────────────────────────────────────────────── */
 
-  /* ── Refs — values that must persist across renders without causing re-renders ── */
+  const canvasRef        = useRef(null);
+  const rendererRef      = useRef(null);
+  const sceneRef         = useRef(null);
+  const cameraRef        = useRef(null);
+  const playerMeshRef    = useRef(null);
+  const monsterMeshesRef = useRef([]);    // THREE.Group per monster
+  const markerRef        = useRef(null);  // "!" exclamation marker group
+  const pathObjectsRef   = useRef([]);    // story path objects for cleanup
+  const walkTimerRef     = useRef(0);
+  const rafIdRef         = useRef(null);
 
-  // Three.js world objects
-  const canvasRef      = useRef(null);  // the <canvas> element
-  const rendererRef    = useRef(null);
-  const sceneRef       = useRef(null);
-  const cameraRef      = useRef(null);
-  const playerMeshRef  = useRef(null);
-  const monsterMeshesRef = useRef([]);
-  const walkTimerRef   = useRef(0);
-  const worldLoopIdRef = useRef(null);
-
-  // Portrait mini-renderer refs (combat screen)
-  const playerPortraitRef  = useRef(null); // <canvas> DOM node
-  const monsterPortraitRef = useRef(null); // <canvas> DOM node
-  const portraitStateRef   = useRef({
-    player:  { renderer: null, scene: null, camera: null, mesh: null },
-    monster: { renderer: null, scene: null, camera: null, mesh: null },
-    animId:  null,
+  // Portrait renderer (battle screen)
+  const portraitCanvasRef = useRef(null);
+  const portraitRef       = useRef({
+    renderer: null, scene: null, camera: null, mesh: null, animId: null,
   });
 
-  // Keyboard state — stored in a ref so the animation loop can read it
-  // without needing a re-render every frame
-  const heldKeysRef = useRef({});
+  /* ── Mirror of state in refs so event handlers always see current values ─── */
+  // The key insight: a keydown handler registered in useEffect closes over
+  // the values at registration time.  Storing them in refs lets the handler
+  // read the LIVE value without needing to be re-registered every render.
 
-  // Keep a ref to the latest nearbyMonster so the keydown handler (which
-  // closes over the initial value) can still read the current one
-  const nearbyMonsterRef = useRef(null);
-  useEffect(() => { nearbyMonsterRef.current = nearbyMonster; }, [nearbyMonster]);
+  const keysRef         = useRef({});
+  const screenRef       = useRef('menu');
+  const nearbyRef       = useRef(null);
+  const defeatedRef     = useRef(new Set());
+  const nextStoryRef    = useRef(0);
+  const monstersRef     = useRef([]);
+  const modeRef         = useRef('story');
+  const lastNearbyIdRef = useRef(null);
+  const feedbackTimerRef = useRef(null);
 
-  // Same for screen — keydown needs the current screen
-  const screenRef = useRef('menu');
-  useEffect(() => { screenRef.current = screen; }, [screen]);
+  // THE FIX: store triggerBattle in a ref so the keydown handler (registered
+  // once) always calls the latest version without stale closure issues.
+  const triggerBattleRef = useRef(null);
 
-  // Same for defeatedIds
-  const defeatedIdsRef = useRef(new Set());
-  useEffect(() => { defeatedIdsRef.current = defeatedIds; }, [defeatedIds]);
+  // Keep all refs in sync with their corresponding state
+  useEffect(() => { screenRef.current    = screen;        }, [screen]);
+  useEffect(() => { nearbyRef.current    = nearbyMonster; }, [nearbyMonster]);
+  useEffect(() => { defeatedRef.current  = defeatedIds;   }, [defeatedIds]);
+  useEffect(() => { nextStoryRef.current = nextStoryId;   }, [nextStoryId]);
+  useEffect(() => { monstersRef.current  = monsters;      }, [monsters]);
+  useEffect(() => { modeRef.current      = mode;          }, [mode]);
 
-  // Toast auto-hide timer
-  const toastTimerRef = useRef(null);
-
-  /* ── Three.js world initialisation ──────────────────────────────────────── */
+  /* ── Three.js world setup ─────────────────────────────────────────────────── */
 
   /**
    * initWorld()
-   * Creates the Three.js scene, renderer, camera, lighting, floor, walls,
-   * pillars, and player mesh. Called once after the component mounts.
+   * Called once on mount.  Builds the full 3D scene and starts the render loop.
    */
   const initWorld = useCallback(() => {
     const canvas = canvasRef.current;
+    if (!canvas) return;
 
     // Renderer
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -300,11 +409,13 @@ export default function App() {
 
     // Scene
     const scene = new THREE.Scene();
-    scene.fog   = new THREE.Fog(0x050a0e, 28, 55);
+    scene.fog   = new THREE.Fog(0x050a0e, 30, 60);
     sceneRef.current = scene;
 
     // Camera — angled top-down
-    const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 200);
+    const camera = new THREE.PerspectiveCamera(
+      58, window.innerWidth / window.innerHeight, 0.1, 200
+    );
     camera.position.set(0, 18, 15);
     camera.lookAt(0, 0, 0);
     cameraRef.current = camera;
@@ -315,9 +426,9 @@ export default function App() {
     sun.position.set(8, 20, 8);
     sun.castShadow = true;
     scene.add(sun);
-    const dungeonGlow = new THREE.PointLight(0x00ff88, 1.1, 22);
-    dungeonGlow.position.set(0, 4, 0);
-    scene.add(dungeonGlow);
+    const glow = new THREE.PointLight(0x00ff88, 1.1, 22);
+    glow.position.set(0, 4, 0);
+    scene.add(glow);
 
     // Floor
     const floor = new THREE.Mesh(
@@ -329,24 +440,24 @@ export default function App() {
     scene.add(floor);
     scene.add(new THREE.GridHelper(80, 40, 0x003311, 0x001d09));
 
-    // Boundary walls (cosmetic)
+    // Boundary walls
     const wallMat = new THREE.MeshLambertMaterial({ color: 0x0a2010 });
-    [[40, 0, 0.5, 80], [-40, 0, 0.5, 80], [0, 40, 80, 0.5], [0, -40, 80, 0.5]]
-      .forEach(([x, z, w, d]) => {
-        const m = new THREE.Mesh(new THREE.BoxGeometry(w, 3, d), wallMat);
-        m.position.set(x, 1.5, z);
+    [[40,0,0.5,80],[-40,0,0.5,80],[0,40,80,0.5],[0,-40,80,0.5]]
+      .forEach(([x,z,w,d]) => {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w,3,d), wallMat);
+        m.position.set(x,1.5,z);
         scene.add(m);
       });
 
-    // Pillars
-    buildPillars(scene);
+    addPillars(scene);
 
     // Player
-    const playerMesh = buildPlayerMesh();
-    scene.add(playerMesh);
-    playerMeshRef.current = playerMesh;
+    const player = buildPlayerMesh();
+    player.position.set(PLAYER_START.x, 0, PLAYER_START.z);
+    scene.add(player);
+    playerMeshRef.current = player;
 
-    // Window resize handler
+    // Resize
     const onResize = () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
@@ -354,144 +465,205 @@ export default function App() {
     };
     window.addEventListener('resize', onResize);
 
-    // Start the render loop
-    startWorldLoop();
+    runLoop();
 
-    // Cleanup when the component unmounts
     return () => {
       window.removeEventListener('resize', onResize);
-      cancelAnimationFrame(worldLoopIdRef.current);
+      cancelAnimationFrame(rafIdRef.current);
       renderer.dispose();
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
-   * startWorldLoop()
-   * The main Three.js animation loop. Handles player movement, camera follow,
-   * monster animations, and proximity detection every frame.
+   * runLoop()
+   * The main rAF loop.  Handles movement, camera, monster animation,
+   * exclamation marker animation, and proximity detection every frame.
    */
-  const startWorldLoop = useCallback(() => {
+  const runLoop = useCallback(() => {
     const loop = () => {
-      worldLoopIdRef.current = requestAnimationFrame(loop);
+      rafIdRef.current = requestAnimationFrame(loop);
 
+      const renderer = rendererRef.current;
       const scene    = sceneRef.current;
       const camera   = cameraRef.current;
-      const renderer = rendererRef.current;
       const player   = playerMeshRef.current;
-      if (!scene || !camera || !renderer || !player) return;
+      if (!renderer || !scene || !camera || !player) return;
 
-      // Only move the player when exploring the world
-      if (screenRef.current === 'world') {
-        const keys = heldKeysRef.current;
+      const currentScreen = screenRef.current;
+
+      // ── Player movement (world screen only) ──
+      if (currentScreen === 'world') {
+        const k = keysRef.current;
         let dx = 0, dz = 0;
-        if (keys['KeyW'] || keys['ArrowUp'])    dz -= WALK_SPEED;
-        if (keys['KeyS'] || keys['ArrowDown'])  dz += WALK_SPEED;
-        if (keys['KeyA'] || keys['ArrowLeft'])  dx -= WALK_SPEED;
-        if (keys['KeyD'] || keys['ArrowRight']) dx += WALK_SPEED;
+        if (k['KeyW'] || k['ArrowUp'])    dz -= WALK_SPEED;
+        if (k['KeyS'] || k['ArrowDown'])  dz += WALK_SPEED;
+        if (k['KeyA'] || k['ArrowLeft'])  dx -= WALK_SPEED;
+        if (k['KeyD'] || k['ArrowRight']) dx += WALK_SPEED;
 
-        const moving = dx !== 0 || dz !== 0;
-        if (moving) {
+        if (dx !== 0 || dz !== 0) {
           const BOUND = 37;
           player.position.x = Math.max(-BOUND, Math.min(BOUND, player.position.x + dx));
           player.position.z = Math.max(-BOUND, Math.min(BOUND, player.position.z + dz));
           player.rotation.y = Math.atan2(dx, dz);
 
-          // Animate legs with a sine wave walk cycle
+          // Walk cycle: sine wave swings the legs back and forth
           walkTimerRef.current += 0.12;
-          player.children.forEach(child => {
-            if (child.name === 'leg_0') child.rotation.x =  Math.sin(walkTimerRef.current) * 0.55;
-            if (child.name === 'leg_1') child.rotation.x = -Math.sin(walkTimerRef.current) * 0.55;
+          player.children.forEach(c => {
+            if (c.name === 'leg_0') c.rotation.x =  Math.sin(walkTimerRef.current) * 0.55;
+            if (c.name === 'leg_1') c.rotation.x = -Math.sin(walkTimerRef.current) * 0.55;
           });
         }
 
-        // Camera smoothly follows the player
-        const targetX = player.position.x * 0.28;
-        const targetZ = player.position.z * 0.28 + 15;
-        camera.position.x += (targetX - camera.position.x) * 0.06;
-        camera.position.z += (targetZ - camera.position.z) * 0.06;
-        camera.lookAt(player.position.x * 0.1, 0, player.position.z * 0.1);
-
-        // Monster idle animations
-        monsterMeshesRef.current.forEach(mesh => {
-          if (!mesh || mesh.userData.defeated) return;
-          mesh.userData.bobTime = (mesh.userData.bobTime || 0) + 0.025;
-          mesh.position.y = Math.sin(mesh.userData.bobTime) * 0.14;
-          mesh.rotation.y += 0.012;
-          const orb = mesh.children.find(c => c.name === 'orb');
-          if (orb) orb.rotation.y += 0.055;
-        });
-
         // Proximity detection — updates nearbyMonster state
-        detectProximity(player);
+        checkProximity(player);
+      }
+
+      // ── Camera: smoothly follows the player ──
+      if (currentScreen === 'world' || currentScreen === 'battle') {
+        const tx = player.position.x * 0.28;
+        const tz = player.position.z * 0.28 + 15;
+        camera.position.x += (tx - camera.position.x) * 0.06;
+        camera.position.z += (tz - camera.position.z) * 0.06;
+        camera.lookAt(player.position.x * 0.1, 0, player.position.z * 0.1);
+      }
+
+      // ── Monster idle animations ──
+      monsterMeshesRef.current.forEach(mesh => {
+        if (!mesh || mesh.userData.defeated) return;
+        mesh.userData.bobTime = (mesh.userData.bobTime || 0) + 0.025;
+        mesh.position.y = Math.sin(mesh.userData.bobTime) * 0.14;
+        mesh.rotation.y += 0.012;
+        const orb = mesh.children.find(c => c.name === 'orb');
+        if (orb) orb.rotation.y += 0.055;
+      });
+
+      // ── Exclamation marker: bob above the next story target ──
+      if (markerRef.current) {
+        markerRef.current.userData.t = (markerRef.current.userData.t || 0) + 0.05;
+        const t  = markerRef.current.userData.t;
+        const id = nextStoryRef.current;
+        const mesh = monsterMeshesRef.current[id];
+        if (mesh && !mesh.userData.defeated) {
+          markerRef.current.position.set(
+            mesh.position.x,
+            3.6 + Math.sin(t) * 0.2,
+            mesh.position.z
+          );
+        }
       }
 
       renderer.render(scene, camera);
     };
-
     loop();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
-   * detectProximity(playerMesh)
-   * Checks XZ distance from the player to every living monster.
-   * If one is close enough, updates nearbyMonster state to show the prompt.
-   * Uses a ref comparison to avoid unnecessary React re-renders every frame.
+   * checkProximity(playerMesh)
+   * Measures XZ distance to every active monster.  Updates nearbyMonster state
+   * only when the result changes to avoid flooding React with re-renders.
    */
-  const lastNearbyRef = useRef(null); // track last found to avoid spam setState
-
-  const detectProximity = useCallback((player) => {
+  const checkProximity = useCallback((player) => {
     const px = player.position.x;
     const pz = player.position.z;
-    let found = null;
+    let foundId = null;
 
     monsterMeshesRef.current.forEach((mesh, i) => {
       if (!mesh || mesh.userData.defeated) return;
-      if (defeatedIdsRef.current.has(i))   return;
-      const dx   = mesh.position.x - px;
-      const dz   = mesh.position.z - pz;
-      if (Math.sqrt(dx * dx + dz * dz) < INTERACT_DIST) found = i;
+      if (defeatedRef.current.has(i))      return;
+      const dx = mesh.position.x - px;
+      const dz = mesh.position.z - pz;
+      if (Math.sqrt(dx*dx + dz*dz) < INTERACT_DIST) foundId = i;
     });
 
-    // Only call setState if the nearby monster actually changed
-    if (found !== lastNearbyRef.current) {
-      lastNearbyRef.current = found;
-      setNearbyMonster(found !== null ? monsters[found] ?? null : null);
-    }
-  }, [monsters]);
+    // Only call setState when the result changes
+    if (foundId === lastNearbyIdRef.current) return;
+    lastNearbyIdRef.current = foundId;
+    setNearbyMonster(foundId !== null ? (monstersRef.current[foundId] ?? null) : null);
+  }, []);
 
-  // Re-run proximity when the monsters list changes (after startGame)
-  useEffect(() => {
-    lastNearbyRef.current = null;
-  }, [monsters]);
+  /* ── Monster management ─────────────────────────────────────────────────── */
 
   /**
-   * spawnMonsters(monsterList)
-   * Removes old monster meshes from the scene and creates new ones.
-   * Called after the API returns the monster list.
+   * spawnMonsters(monsterList, gameMode)
+   * Creates 3D monster meshes positioned at their spawn points.
+   * In story mode, all monsters except index 0 start dimmed (grey).
+   * Also builds the story path and the "!" marker for story mode.
    */
-  const spawnMonsters = useCallback((monsterList) => {
+  const spawnMonsters = useCallback((monsterList, gameMode) => {
     const scene = sceneRef.current;
     if (!scene) return;
 
-    // Remove previous meshes
+    // Remove old meshes
     monsterMeshesRef.current.forEach(m => m && scene.remove(m));
     monsterMeshesRef.current = [];
 
-    monsterList.forEach((monster, i) => {
-      const mesh = buildMonsterMesh(i);
-      const pos  = SPAWN_POS[i];
-      mesh.position.set(pos.x, 0, pos.z);
+    // Remove old path objects
+    pathObjectsRef.current.forEach(o => scene.remove(o));
+    pathObjectsRef.current = [];
+
+    // Remove old marker
+    if (markerRef.current) { scene.remove(markerRef.current); markerRef.current = null; }
+
+    // Build story path in story mode
+    if (gameMode === 'story') {
+      const pathObjs = buildStoryPath(scene);
+      pathObjectsRef.current = pathObjs;
+    }
+
+    monsterList.forEach((_, i) => {
+      // In story mode, all monsters except the first start dimmed
+      const isDimmed = gameMode === 'story' && i > 0;
+      const mesh = buildMonsterMesh(i, isDimmed);
+      mesh.position.set(SPAWN_POS[i].x, 0, SPAWN_POS[i].z);
       mesh.userData.bobTime  = Math.random() * Math.PI * 2;
       mesh.userData.defeated = false;
+      mesh.userData.dimmed   = isDimmed;
       scene.add(mesh);
       monsterMeshesRef.current.push(mesh);
     });
+
+    // Story mode: create the "!" marker above monster 0
+    if (gameMode === 'story') {
+      const marker = buildExclamationMarker();
+      marker.position.set(SPAWN_POS[0].x, 3.6, SPAWN_POS[0].z);
+      marker.userData.t = 0;
+      scene.add(marker);
+      markerRef.current = marker;
+    }
+  }, []);
+
+  /**
+   * activateNextMonster(id)
+   * After a story-mode victory, un-dims the next monster (replaces grey mesh
+   * with a full-colour one) and moves the "!" marker to it.
+   */
+  const activateNextMonster = useCallback((id) => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+
+    const oldMesh = monsterMeshesRef.current[id];
+    if (!oldMesh) return;
+
+    // Remove the dim mesh and replace with a full-colour one
+    scene.remove(oldMesh);
+    const newMesh = buildMonsterMesh(id, false);
+    newMesh.position.set(SPAWN_POS[id].x, 0, SPAWN_POS[id].z);
+    newMesh.userData.bobTime  = 0;
+    newMesh.userData.defeated = false;
+    newMesh.userData.dimmed   = false;
+    scene.add(newMesh);
+    monsterMeshesRef.current[id] = newMesh;
+
+    // Move the "!" marker
+    if (markerRef.current) {
+      markerRef.current.position.set(SPAWN_POS[id].x, 3.6, SPAWN_POS[id].z);
+      markerRef.current.userData.t = 0;
+    }
   }, []);
 
   /**
    * sinkMonster(id)
-   * Plays the defeat animation: the monster sinks below the floor, then
-   * is removed from the scene.
+   * Defeat animation: monster sinks below the floor then is removed.
    */
   const sinkMonster = useCallback((id) => {
     const mesh = monsterMeshesRef.current[id];
@@ -499,319 +671,336 @@ export default function App() {
     mesh.userData.defeated = true;
 
     let y = mesh.position.y;
-    const timer = setInterval(() => {
+    const t = setInterval(() => {
       y -= 0.07;
       mesh.position.y = y;
-      if (y <= -4) {
-        clearInterval(timer);
-        sceneRef.current?.remove(mesh);
-      }
+      if (y <= -4) { clearInterval(t); sceneRef.current?.remove(mesh); }
     }, 20);
   }, []);
 
-  /* ── Portrait mini-renderers ─────────────────────────────────────────────── */
+  /* ── Portrait mini-renderer ─────────────────────────────────────────────── */
 
   /**
-   * initPortraits()
-   * Creates two tiny Three.js scenes that render into the combat-screen
-   * portrait <canvas> elements. Called when the combat screen mounts.
+   * initPortrait(monsterId)
+   * Sets up (or reuses) a tiny Three.js scene inside the battle portrait canvas.
+   * Shows a spinning version of the monster being fought.
    */
-  const initPortraits = useCallback(() => {
-    const ps = portraitStateRef.current;
+  const initPortrait = useCallback((monsterId) => {
+    const p      = portraitRef.current;
+    const canvas = portraitCanvasRef.current;
+    if (!canvas) return;
 
-    ['player', 'monster'].forEach(side => {
-      const canvas   = side === 'player' ? playerPortraitRef.current : monsterPortraitRef.current;
-      if (!canvas) return;
+    if (!p.renderer) {
+      const r = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+      r.setSize(160, 160);
+      r.setClearColor(0x000000, 0);
+      p.renderer = r;
 
-      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-      renderer.setSize(130, 130);
-      renderer.setClearColor(0x000000, 0);
-
-      const scene  = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 50);
-      camera.position.set(0, 1.8, 4.2);
-      camera.lookAt(0, 1.2, 0);
-
-      scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+      const s = new THREE.Scene();
+      s.add(new THREE.AmbientLight(0xffffff, 0.5));
       const dir = new THREE.DirectionalLight(0x00ff88, 1.3);
       dir.position.set(2, 5, 3);
-      scene.add(dir);
+      s.add(dir);
+      p.scene = s;
 
-      ps[side].renderer = renderer;
-      ps[side].scene    = scene;
-      ps[side].camera   = camera;
-    });
+      const cam = new THREE.PerspectiveCamera(50, 1, 0.1, 50);
+      cam.position.set(0, 1.8, 4.5);
+      cam.lookAt(0, 1.3, 0);
+      p.camera = cam;
+    }
 
-    // Always show the player model in the player portrait
-    const pm = buildPlayerMesh();
-    ps.player.mesh = pm;
-    ps.player.scene?.add(pm);
-  }, []);
+    // Swap in the new monster model
+    if (p.mesh) p.scene.remove(p.mesh);
+    const mesh = buildMonsterMesh(monsterId, false);
+    p.mesh = mesh;
+    p.scene.add(mesh);
 
-  /**
-   * setMonsterPortrait(monsterId)
-   * Swaps the monster model in the portrait mini-scene when combat starts.
-   */
-  const setMonsterPortrait = useCallback((id) => {
-    const ps = portraitStateRef.current;
-    if (ps.monster.mesh) ps.monster.scene?.remove(ps.monster.mesh);
-    const mesh = buildMonsterMesh(id);
-    ps.monster.mesh = mesh;
-    ps.monster.scene?.add(mesh);
-  }, []);
-
-  /**
-   * startPortraitAnimation() / stopPortraitAnimation()
-   * Run/stop the animation loop for the two portrait renderers.
-   */
-  const startPortraitAnimation = useCallback(() => {
-    stopPortraitAnimation();
-    const ps = portraitStateRef.current;
-    let t    = 0;
-
+    stopPortrait();
+    let t = 0;
     const loop = () => {
-      ps.animId = requestAnimationFrame(loop);
-      t += 0.035;
-
-      if (ps.player.mesh)  ps.player.mesh.rotation.y  = Math.sin(t) * 0.3;
-      if (ps.monster.mesh) {
-        ps.monster.mesh.rotation.y  = Math.PI + Math.sin(t + 1) * 0.35;
-        ps.monster.mesh.position.y  = Math.sin(t * 1.3) * 0.08;
-      }
-
-      if (ps.player.renderer && ps.player.scene && ps.player.camera)
-        ps.player.renderer.render(ps.player.scene, ps.player.camera);
-      if (ps.monster.renderer && ps.monster.scene && ps.monster.camera)
-        ps.monster.renderer.render(ps.monster.scene, ps.monster.camera);
+      p.animId = requestAnimationFrame(loop);
+      t += 0.04;
+      mesh.rotation.y = Math.PI + Math.sin(t) * 0.4;
+      mesh.position.y = Math.sin(t * 1.2) * 0.1;
+      p.renderer.render(p.scene, p.camera);
     };
-
     loop();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const stopPortraitAnimation = useCallback(() => {
-    const ps = portraitStateRef.current;
-    if (ps.animId !== null) {
-      cancelAnimationFrame(ps.animId);
-      ps.animId = null;
-    }
+  const stopPortrait = useCallback(() => {
+    const p = portraitRef.current;
+    if (p.animId !== null) { cancelAnimationFrame(p.animId); p.animId = null; }
   }, []);
 
-  /* ── Lifecycle: mount / unmount ──────────────────────────────────────────── */
+  /* ── Lifecycle ──────────────────────────────────────────────────────────── */
 
   useEffect(() => {
-    // Init the Three.js world as soon as the canvas element exists
     const cleanup = initWorld();
     return cleanup;
   }, [initWorld]);
 
-  // Init portrait renderers when canvas refs are available
-  // We do this lazily inside enterBattle() instead since the canvases
-  // are only in the DOM when the combat screen is visible.
-
-  /* ── Keyboard input ──────────────────────────────────────────────────────── */
+  /* ── Keyboard input ─────────────────────────────────────────────────────── */
+  // Registered ONCE.  Reads values from refs (not state/props) so it never
+  // goes stale and never needs to be re-registered.
 
   useEffect(() => {
-    const onKeyDown = (e) => {
-      heldKeysRef.current[e.code] = true;
+    const onDown = (e) => {
+      keysRef.current[e.code] = true;
 
-      // E or Space — interact with nearby monster in world view
+      if (e.code === 'Space') e.preventDefault(); // prevent page scroll
+
+      // E or Space in the world → try to start a battle
       if ((e.code === 'KeyE' || e.code === 'Space') && screenRef.current === 'world') {
-        const nearby = nearbyMonsterRef.current;
-        if (nearby && !defeatedIdsRef.current.has(nearby.id)) {
-          enterBattle(nearby.id);
-        }
-        if (e.code === 'Space') e.preventDefault();
+        const nearby = nearbyRef.current;
+        if (!nearby) return;
+        if (defeatedRef.current.has(nearby.id)) return;
+
+        // Story mode: only allowed to fight the next monster in sequence
+        if (modeRef.current === 'story' && nearby.id !== nextStoryRef.current) return;
+
+        // Call the LATEST version of triggerBattle via the ref
+        triggerBattleRef.current?.(nearby.id);
       }
     };
 
-    const onKeyUp = (e) => {
-      heldKeysRef.current[e.code] = false;
-    };
+    const onUp = (e) => { keysRef.current[e.code] = false; };
 
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup',   onKeyUp);
-
+    window.addEventListener('keydown', onDown);
+    window.addEventListener('keyup',   onUp);
     return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup',   onKeyUp);
+      window.removeEventListener('keydown', onDown);
+      window.removeEventListener('keyup',   onUp);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // Empty deps — uses refs only, never needs re-registration
 
-  /* ── Toast helper ────────────────────────────────────────────────────────── */
+  /* ── Feedback helper ────────────────────────────────────────────────────── */
 
-  const showToast = useCallback((message, correct) => {
-    clearTimeout(toastTimerRef.current);
-    setToast({ visible: true, message, correct });
-    toastTimerRef.current = setTimeout(() => {
-      setToast(t => ({ ...t, visible: false }));
-    }, 1500);
+  const showFeedback = useCallback((msg, type) => {
+    clearTimeout(feedbackTimerRef.current);
+    setFeedback({ msg, type, show: true });
+    feedbackTimerRef.current = setTimeout(
+      () => setFeedback(f => ({ ...f, show: false })),
+      1800
+    );
   }, []);
 
-  /* ── Game flow functions ─────────────────────────────────────────────────── */
+  /* ── Game flow ──────────────────────────────────────────────────────────── */
 
   /**
-   * startGame(mode)
-   * Sends setup info to the backend, stores the returned monster list,
-   * and transitions to either the world (story) or the monster list (adventure).
+   * startGame(chosenMode)
+   * Sends setup to the backend, spawns monsters, enters the world.
    */
   const startGame = useCallback(async (chosenMode) => {
     const name = playerName.trim() || 'Hero';
     setMode(chosenMode);
+    setPlayerHP(100);
+    setDefeatedIds(new Set());
+    setNextStoryId(0);
+    setNearbyMonster(null);
+    lastNearbyIdRef.current = null;
 
     const data = await apiPost('/start', { name, mode: chosenMode });
-    if (!data.ok) { alert('Could not reach the Flask server. Is it running on port 5000?'); return; }
+    if (!data.ok) {
+      alert('Cannot reach Flask. Is it running on port 5000?');
+      return;
+    }
 
     setMonsters(data.monsters);
-    setDefeatedIds(new Set());
-    setPlayerHP(100);
 
-    if (chosenMode === 'story') {
-      // Reset player position in the world
-      if (playerMeshRef.current) playerMeshRef.current.position.set(0, 0, 0);
-      spawnMonsters(data.monsters);
-      setScreen('world');
-    } else {
-      setScreen('adventure');
+    // Reset player to start position
+    if (playerMeshRef.current) {
+      playerMeshRef.current.position.set(PLAYER_START.x, 0, PLAYER_START.z);
     }
+
+    spawnMonsters(data.monsters, chosenMode);
+    setScreen('world');
   }, [playerName, spawnMonsters]);
 
   /**
-   * enterBattle(monsterId)
-   * Tells the backend to start a battle, then transitions to the combat screen.
+   * triggerBattle(monsterId)
+   * Called when the player presses E/Space or clicks "Fight".
+   * Contacts the backend, sets battle state, switches to battle screen.
+   * Also stored in triggerBattleRef so the keydown handler can call it.
    */
-  const enterBattle = useCallback(async (monsterId) => {
+  const triggerBattle = useCallback(async (monsterId) => {
     const data = await apiPost('/battle/start', { monster_id: monsterId });
-    if (!data.ok) { alert(data.error || 'Could not start battle.'); return; }
+    if (!data.ok) {
+      alert(data.error || 'Could not start battle.');
+      return;
+    }
 
     setBattleMonster(data.monster);
     setQuestion(data.question);
-    setCorrectAnswers(data.correct_answers);
-    setRequiredCorrect(data.required_correct);
+    setCorrectCount(data.correct_count);
     setAnswerValue('');
-    setAnswerDisabled(false);
+    setAnswerLocked(false);
+    setFeedback({ msg: '', type: 'correct', show: false });
     setNearbyMonster(null);
+    lastNearbyIdRef.current = null;
 
-    setScreen('combat');
+    setScreen('battle');
 
-    // Portrait renderers need the canvas elements to be in the DOM first.
-    // requestAnimationFrame defers until after React has painted the combat screen.
+    // Portrait canvas is only in the DOM after the battle screen renders
     requestAnimationFrame(() => {
-      initPortraits();
-      setMonsterPortrait(monsterId);
-      startPortraitAnimation();
-
-      // Auto-focus the answer input
+      initPortrait(monsterId);
       document.getElementById('answer-input')?.focus();
     });
-  }, [initPortraits, setMonsterPortrait, startPortraitAnimation]);
+  }, [initPortrait]);
+
+  // Keep triggerBattleRef in sync with the latest triggerBattle
+  // This is the core fix for the stale-closure / E-key-not-working bug.
+  useEffect(() => {
+    triggerBattleRef.current = triggerBattle;
+  }, [triggerBattle]);
 
   /**
    * submitAnswer()
-   * Reads the answer input, posts to the backend, handles the response.
+   * Reads the answer input, posts to /api/battle/answer, handles result.
+   *
+   * Key fix vs. previous version:
+   *   Old code read `data.correct` (undefined).
+   *   New code reads `data.feedback.correct` (correct field).
    */
   const submitAnswer = useCallback(async () => {
-    if (!answerValue.trim() || answerDisabled) return;
-
-    setAnswerDisabled(true);
     const answer = answerValue.trim();
+    if (!answer || answerLocked) return;
+
+    setAnswerLocked(true);
     setAnswerValue('');
 
     const data = await apiPost('/battle/answer', { answer });
-    if (!data.ok) { setAnswerDisabled(false); return; }
+    if (!data.ok) { setAnswerLocked(false); return; }
 
-    // Update counters and bars
+    // Update HP and correct counter immediately
     setPlayerHP(data.player_health);
-    setCorrectAnswers(data.correct_answers);
-    showToast(data.feedback.message, data.feedback.correct);
+    setCorrectCount(data.correct_count);
+
+    // Show feedback — READ FROM data.feedback.correct, NOT data.correct
+    const isCorrect = data.feedback.correct;
+    showFeedback(data.feedback.message, isCorrect ? 'correct' : 'wrong');
 
     if (data.battle_over) {
-      stopPortraitAnimation();
+      stopPortrait();
 
       if (data.battle_won) {
-        // Mark monster as defeated
-        setDefeatedIds(prev => {
-          const next = new Set(prev);
-          next.add(battleMonster.id);
-          return next;
-        });
-        if (mode === 'story') sinkMonster(battleMonster.id);
+        const id = battleMonster?.id;
+
+        // Mark as defeated in React state
+        setDefeatedIds(prev => { const n = new Set(prev); n.add(id); return n; });
+
+        // Sink the defeated monster
+        sinkMonster(id);
+
+        // Story mode: activate the next monster in the sequence
+        if (modeRef.current === 'story') {
+          const nextId = nextStoryRef.current + 1;
+          setNextStoryId(nextId);
+          // Activate (un-dim) the next monster if one exists
+          if (nextId < SPAWN_POS.length) {
+            setTimeout(() => activateNextMonster(nextId), 400);
+          } else {
+            // All monsters beaten — remove the "!" marker
+            if (markerRef.current) {
+              sceneRef.current?.remove(markerRef.current);
+              markerRef.current = null;
+            }
+          }
+        }
       }
 
-      // Wait for toast to be readable, then navigate
+      // Wait for feedback to be readable, then navigate
       setTimeout(() => {
         if (data.game_over) {
           setScreen(data.game_won ? 'gameover-win' : 'gameover-lose');
-        } else if (mode === 'adventure') {
-          setScreen('adventure');
         } else {
           setScreen('world');
-          setNearbyMonster(null);
         }
-      }, 1800);
+      }, 1600);
 
     } else if (data.next_question) {
-      // Show next question after a brief pause
+      // Correct → next question after feedback pause
       setTimeout(() => {
         setQuestion(data.next_question);
-        setAnswerDisabled(false);
+        setAnswerLocked(false);
         document.getElementById('answer-input')?.focus();
-      }, 1100);
+      }, 900);
     } else {
-      setAnswerDisabled(false);
-      document.getElementById('answer-input')?.focus();
+      // Wrong → same question, just re-enable input
+      setTimeout(() => {
+        setAnswerLocked(false);
+        document.getElementById('answer-input')?.focus();
+      }, 900);
     }
-  }, [answerValue, answerDisabled, battleMonster, mode, showToast, sinkMonster, stopPortraitAnimation]);
+  }, [answerValue, answerLocked, battleMonster, showFeedback,
+      sinkMonster, stopPortrait, activateNextMonster]);
 
   /**
    * fleeBattle()
-   * Cancels the current battle with no penalty.
+   * Exit a battle without penalty.
    */
   const fleeBattle = useCallback(async () => {
     await apiPost('/battle/flee');
-    stopPortraitAnimation();
-    setScreen(mode === 'adventure' ? 'adventure' : 'world');
-    setNearbyMonster(null);
-  }, [mode, stopPortraitAnimation]);
+    stopPortrait();
+    setScreen('world');
+    setFeedback({ msg: '', type: 'correct', show: false });
+  }, [stopPortrait]);
 
   /**
    * returnToMenu()
-   * Resets everything and goes back to the menu.
+   * Reset all state and go back to the title screen.
    */
   const returnToMenu = useCallback(() => {
-    stopPortraitAnimation();
+    stopPortrait();
+
+    // Clean up story path and marker from the scene
+    pathObjectsRef.current.forEach(o => sceneRef.current?.remove(o));
+    pathObjectsRef.current = [];
+    if (markerRef.current) { sceneRef.current?.remove(markerRef.current); markerRef.current = null; }
+    monsterMeshesRef.current.forEach(m => m && sceneRef.current?.remove(m));
+    monsterMeshesRef.current = [];
+
     setScreen('menu');
-    setNearbyMonster(null);
     setMonsters([]);
     setDefeatedIds(new Set());
+    setNextStoryId(0);
     setPlayerHP(100);
-  }, [stopPortraitAnimation]);
+    setNearbyMonster(null);
+    lastNearbyIdRef.current = null;
+  }, [stopPortrait]);
 
-  /* ── Derived values ──────────────────────────────────────────────────────── */
+  /* ── Derived values ─────────────────────────────────────────────────────── */
 
-  // Which screens are active (used to apply/remove .hidden class)
-  const isMenu      = screen === 'menu';
-  const isWorld     = screen === 'world';
-  const isAdventure = screen === 'adventure';
-  const isCombat    = screen === 'combat';
-  const isGameOver  = screen === 'gameover-win' || screen === 'gameover-lose';
-  const gameWon     = screen === 'gameover-win';
+  const isMenu   = screen === 'menu';
+  const isWorld  = screen === 'world';
+  const isBattle = screen === 'battle';
+  const isOver   = screen === 'gameover-win' || screen === 'gameover-lose';
+  const gameWon  = screen === 'gameover-win';
+  const showHUD  = isWorld || isBattle;
 
-  const showHUD      = isWorld || isAdventure || isCombat;
-  const showProgress = isWorld || isAdventure || isCombat;
-  const showHint     = isWorld;
-  const showProximity = isWorld && nearbyMonster !== null;
+  // Can the player fight the nearby monster?
+  const canFight = nearbyMonster &&
+    !defeatedIds.has(nearbyMonster.id) &&
+    (mode !== 'story' || nearbyMonster.id === nextStoryId);
 
-  /* ── Render ──────────────────────────────────────────────────────────────── */
+  // Is the nearby monster locked (story mode, wrong order)?
+  const isNearLocked = nearbyMonster &&
+    !defeatedIds.has(nearbyMonster.id) &&
+    mode === 'story' &&
+    nearbyMonster.id !== nextStoryId;
+
+  /* ── Render ─────────────────────────────────────────────────────────────── */
 
   return (
     <>
-      {/* ── Three.js canvas (always present, always rendering) ── */}
+      {/* ── Three.js canvas — always present, renders the 3D world ── */}
       <canvas ref={canvasRef} className="game-canvas" />
 
-      {/* ── Scanline overlay ── */}
+      {/* ── CRT scanline overlay ── */}
       <div className="scanlines" />
 
-      {/* ── HUD (health bar) ── */}
+      {/* ══════════════════════════════════════════════════════════════════════
+          HUD — player name + HP bar, visible during world and battle
+          ══════════════════════════════════════════════════════════════════════ */}
       {showHUD && (
         <div className="hud">
           <div className="hud-left">
@@ -828,50 +1017,85 @@ export default function App() {
         </div>
       )}
 
-      {/* ── Monster progress (top-right dots) ── */}
-      {showProgress && monsters.length > 0 && (
+      {/* ── Monster progress dots (top-right) ── */}
+      {(isWorld || isBattle) && monsters.length > 0 && (
         <div className="monster-progress">
-          {monsters.map(m => (
-            <div key={m.id} className={`prog-item${defeatedIds.has(m.id) ? ' defeated' : ''}`}>
-              <span>{m.name}</span>
-              <span className="prog-dot" />
-            </div>
-          ))}
+          {monsters.map((m, i) => {
+            const beaten = defeatedIds.has(m.id);
+            const isNext = mode === 'story' && i === nextStoryId && !beaten;
+            const locked = mode === 'story' && i > nextStoryId && !beaten;
+            return (
+              <div
+                key={m.id}
+                className={
+                  `prog-item` +
+                  (beaten  ? ' defeated'    : '') +
+                  (locked  ? ' locked'      : '') +
+                  (isNext  ? ' next-target' : '')
+                }
+              >
+                <span>{m.name}{isNext ? ' ◀' : ''}</span>
+                <span className="prog-dot" />
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {/* ── Controls hint ── */}
-      {showHint && (
+      {/* ── WASD controls hint ── */}
+      {isWorld && (
         <div className="controls-hint">
-          WASD / ARROW KEYS — move &nbsp;|&nbsp; E or SPACE — interact
+          WASD / ARROWS — move &nbsp;|&nbsp; E or SPACE — interact with monster
         </div>
       )}
 
       {/* ── Proximity prompt ── */}
-      <div className={`proximity-prompt${showProximity ? ' visible' : ''}`}>
-        {nearbyMonster && (
-          <>
-            <div className="prox-name">{nearbyMonster.name.toUpperCase()}</div>
-            <div className="prox-info">
-              Difficulty:{' '}
-              <span className={DIFF_CLASS[nearbyMonster.difficulty] || ''}>
-                {nearbyMonster.difficulty}
-              </span>
-              &nbsp;|&nbsp; Attack: {nearbyMonster.attack} dmg / wrong answer
-            </div>
-            <div className="prox-actions">
-              <button className="btn yellow" onClick={() => enterBattle(nearbyMonster.id)}>
-                <span>⚔ Fight</span>
-              </button>
-              <button className="btn red" onClick={() => setNearbyMonster(null)}>
-                <span>✗ Retreat</span>
-              </button>
-            </div>
-          </>
-        )}
-      </div>
+      {isWorld && (
+        <div className={`proximity-prompt${(canFight || isNearLocked) ? ' visible' : ''}`}>
+          {nearbyMonster && (
+            <>
+              <div className="prox-name">{nearbyMonster.name.toUpperCase()}</div>
+              <div className="prox-info">
+                Difficulty:{' '}
+                <span className={DIFF_CLASS[nearbyMonster.difficulty] || ''}>
+                  {nearbyMonster.difficulty}
+                </span>
+                <br />
+                Wrong answers deal 5–15 random damage
+              </div>
 
-      {/* ── MENU SCREEN ── */}
+              {isNearLocked ? (
+                // Story mode — wrong monster
+                <div className="prox-locked">
+                  ✗ Defeat {monsters[nextStoryId]?.name ?? 'the previous monster'} first!
+                </div>
+              ) : (
+                <div className="prox-actions">
+                  <button
+                    className="btn yellow"
+                    onClick={() => triggerBattle(nearbyMonster.id)}
+                  >
+                    <span>⚔ Fight!</span>
+                  </button>
+                  <button
+                    className="btn red"
+                    onClick={() => {
+                      setNearbyMonster(null);
+                      lastNearbyIdRef.current = null;
+                    }}
+                  >
+                    <span>✗ Walk away</span>
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          MENU SCREEN
+          ══════════════════════════════════════════════════════════════════════ */}
       <div className={`screen menu-screen${isMenu ? '' : ' hidden'}`}>
         <div className="menu-title">C++ QUEST<br />ACADEMY</div>
         <div className="menu-sub">The Dungeon of Code</div>
@@ -882,8 +1106,8 @@ export default function App() {
           placeholder="Enter your name…"
           maxLength={20}
           autoComplete="off"
-          value={playerName === 'Hero' ? '' : playerName}
-          onChange={e => setPlayerName(e.target.value || 'Hero')}
+          value={playerName}
+          onChange={e => setPlayerName(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && startGame('story')}
         />
 
@@ -897,101 +1121,105 @@ export default function App() {
         </div>
 
         <div className="mode-desc">
-          STORY MODE — defeat all 5 monsters in order, from Goblin to Ogre.<br />
-          ADVENTURE MODE — pick any one monster and prove your C++ knowledge.
+          STORY — follow the lit path, defeat all 5 monsters in order.<br />
+          ADVENTURE — explore freely, fight any monster you choose.
         </div>
       </div>
 
-      {/* ── ADVENTURE MODE SCREEN ── */}
-      <div className={`screen adventure-screen${isAdventure ? '' : ' hidden'}`}>
-        <div className="adv-heading">CHOOSE YOUR OPPONENT</div>
-        <div className="adventure-list">
-          {monsters.map(m => (
-            <div
-              key={m.id}
-              className={`adv-item${defeatedIds.has(m.id) ? ' defeated' : ''}`}
-              onClick={() => !defeatedIds.has(m.id) && enterBattle(m.id)}
-            >
-              <div className="adv-name">{m.name}</div>
-              <div className="adv-meta">
-                <span className={DIFF_CLASS[m.difficulty] || ''}>{m.difficulty}</span>
-                <br />
-                {m.attack} dmg / wrong
+      {/* ══════════════════════════════════════════════════════════════════════
+          BATTLE SCREEN — Pokémon-style overlay on top of the 3D world
+          ══════════════════════════════════════════════════════════════════════ */}
+      <div className={`screen battle-screen${isBattle ? '' : ' hidden'}`}>
+
+        {/* ── Top half: monster info card (left) + monster sprite (right) ── */}
+        <div className="battle-top">
+
+          {/* Monster info card — shows name, difficulty, progress bar */}
+          {battleMonster && (
+            <div className="battle-monster-info">
+              <div className="bmi-name">{battleMonster.name.toUpperCase()}</div>
+              <div className={`bmi-diff ${DIFF_CLASS[battleMonster.difficulty] || ''}`}>
+                {battleMonster.difficulty}
+              </div>
+              {/* Progress bar fills as the player gets correct answers */}
+              <div className="bmi-bar-wrap">
+                <span className="bmi-bar-label">Progress</span>
+                <div className="bmi-bar">
+                  <div
+                    className="bmi-bar-fill"
+                    style={{ width: `${(correctCount / 5) * 100}%` }}
+                  />
+                </div>
+              </div>
+              <div className="bmi-progress">{correctCount} / 5 correct</div>
+            </div>
+          )}
+
+          {/* Monster sprite area — speech bubble + spinning 3D portrait */}
+          <div className="battle-monster-area">
+            {/* Speech bubble shows the current question */}
+            {question && (
+              <div className="speech-bubble">
+                <div className="bubble-q-number">
+                  QUESTION {question.number} OF {question.total}
+                </div>
+                <div className="bubble-q-text">{question.prompt}</div>
+              </div>
+            )}
+
+            {/* Three.js renders the spinning monster model into this canvas */}
+            <canvas
+              ref={portraitCanvasRef}
+              className="battle-portrait-canvas"
+              width={160}
+              height={160}
+            />
+          </div>
+        </div>
+
+        {/* ── Bottom half: player HP card + answer dialog ── */}
+        <div className="battle-bottom">
+
+          {/* Player HP card */}
+          <div className="battle-player-card">
+            <div className="bpc-name">{(playerName || 'HERO').toUpperCase()}</div>
+            <div className="bpc-hp-wrap">
+              <span className="bpc-hp-label">HP</span>
+              <div className="bpc-hp-bar">
+                <div
+                  className="bpc-hp-fill"
+                  style={{ width: `${Math.max(0, playerHP)}%` }}
+                />
+              </div>
+              <span className="hp-text">{playerHP} / 100</span>
+            </div>
+          </div>
+
+          {/* Dialog / answer input panel */}
+          <div className="battle-dialog">
+            <div className="battle-dialog-top">
+              <span className="dialog-hint">Type your answer below:</span>
+              {/* Feedback message (correct / wrong) — auto-hides after 1.8s */}
+              <div
+                className={`dialog-feedback ${feedback.type}${feedback.show ? ' show' : ''}`}
+              >
+                {feedback.msg}
               </div>
             </div>
-          ))}
-        </div>
-        <button className="btn red" onClick={returnToMenu}>
-          <span>↩ Back to Menu</span>
-        </button>
-      </div>
 
-      {/* ── COMBAT SCREEN ── */}
-      <div className={`screen combat-screen${isCombat ? '' : ' hidden'}`}>
-        <div className="combat-grid">
-
-          {/* Player combatant */}
-          <div className="combatant">
-            <div className="combatant-label">PLAYER</div>
-            {/* Three.js portrait renders into this canvas */}
-            <canvas ref={playerPortraitRef} className="portrait-canvas" width={130} height={130} />
-            <div className="combatant-name">{(playerName || 'Hero').toUpperCase()}</div>
-            <div className="c-hp-bar">
-              <div className="c-hp-fill player" style={{ width: `${Math.max(0, playerHP)}%` }} />
-            </div>
-          </div>
-
-          {/* VS + correct answers counter */}
-          <div className="vs-col">
-            <div className="vs-text">VS</div>
-            <div className="correct-display">
-              {correctAnswers} / {requiredCorrect}<br />correct
-            </div>
-          </div>
-
-          {/* Monster combatant */}
-          <div className="combatant">
-            <div className="combatant-label">ENEMY</div>
-            <canvas ref={monsterPortraitRef} className="portrait-canvas" width={130} height={130} />
-            <div className="combatant-name">
-              {battleMonster ? battleMonster.name.toUpperCase() : ''}
-            </div>
-            <div className="c-hp-bar">
-              <div
-                className="c-hp-fill monster"
-                style={{
-                  width: `${Math.max(0, ((requiredCorrect - correctAnswers) / requiredCorrect) * 100)}%`,
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Question panel — spans all 3 columns via CSS grid-column: 1 / -1 */}
-          <div className="question-panel">
-            <div className="q-meta">
-              <span>
-                {battleMonster ? `DIFFICULTY: ${battleMonster.difficulty.toUpperCase()}` : ''}
-              </span>
-              <span>
-                {question ? `Question ${question.number} of ${question.total}` : ''}
-              </span>
-            </div>
-            <div className="q-text">
-              {question ? question.prompt : 'Loading question…'}
-            </div>
-            <div className="answer-row">
+            <div className="dialog-row">
               <input
                 id="answer-input"
                 className="answer-input"
                 type="text"
-                placeholder="Type your answer and press Enter…"
+                placeholder="Answer… then press Enter"
                 autoComplete="off"
                 value={answerValue}
-                disabled={answerDisabled}
+                disabled={answerLocked}
                 onChange={e => setAnswerValue(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && submitAnswer()}
               />
-              <button className="btn" onClick={submitAnswer}>
+              <button className="btn" onClick={submitAnswer} disabled={answerLocked}>
                 <span>Submit</span>
               </button>
               <button className="btn red" onClick={fleeBattle}>
@@ -999,30 +1227,29 @@ export default function App() {
               </button>
             </div>
           </div>
-
         </div>
       </div>
 
-      {/* ── FEEDBACK TOAST ── */}
-      <div
-        className={`feedback-toast${toast.visible ? ' show' : ''}${toast.correct ? ' correct' : ' wrong'}`}
-      >
-        {toast.message}
-      </div>
-
-      {/* ── GAME OVER SCREEN ── */}
-      <div className={`screen gameover-screen${isGameOver ? '' : ' hidden'}`}>
+      {/* ══════════════════════════════════════════════════════════════════════
+          GAME OVER SCREEN
+          ══════════════════════════════════════════════════════════════════════ */}
+      <div className={`screen gameover-screen${isOver ? '' : ' hidden'}`}>
         <div className={`go-title ${gameWon ? 'win' : 'lose'}`}>
-          {gameWon ? 'VICTORY!' : 'DEFEATED'}
+          {gameWon ? 'VICTORY!' : 'GAME OVER'}
         </div>
         <div className="go-sub">
           {gameWon
-            ? `${playerName} mastered the C++ dungeon!`
-            : `${playerName} was defeated. Better luck next time.`}
+            ? `${playerName || 'Hero'} conquered the C++ dungeon!`
+            : `${playerName || 'Hero'} was defeated…`}
         </div>
-        <button className="btn" onClick={returnToMenu}>
-          <span>↩ Play Again</span>
-        </button>
+        <div className="go-buttons">
+          <button className="btn" onClick={returnToMenu}>
+            <span>↩ Return to Menu</span>
+          </button>
+          <button className="btn red" onClick={() => window.close()}>
+            <span>✗ Quit Game</span>
+          </button>
+        </div>
       </div>
     </>
   );
