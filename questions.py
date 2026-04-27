@@ -77,6 +77,8 @@ def create_questions():
             Question("What type is used to store whole numbers in C++?", "int"),
             Question("What symbol is used to assign a value to a variable?", "="),
             Question("What keyword is used to write the alternative branch of an if statement?", "else"),
+            Question("What keyword is used to return a value from a function?", "return"),
+            Question("What symbol is used to start a single-line comment in C++?", "//"),
         ],
 
         "Easy Medium": [
@@ -90,6 +92,8 @@ def create_questions():
             Question("What loop is commonly used when you know how many times to repeat?", "for"),
             Question("What loop continues while a condition is true?", "while"),
             Question("What header is commonly used for strings in C++?", "string"),
+            Question("What keyword is used to skip the rest of a loop iteration?", "continue"),
+            Question("What keyword is used to immediately exit a loop?", "break"),
         ],
 
         "Medium": [
@@ -103,6 +107,8 @@ def create_questions():
             Question("What is a function called when it belongs to a class?", "member function"),
             Question("What do you call a variable that belongs to an object?", "member variable"),
             Question("What symbol is used in inheritance syntax, as in class Dog : public Animal?", ":"),
+            Question("What file usually contains class declarations in a multi-file C++ program?", "header file"),
+            Question("What file usually contains function definitions in a multi-file C++ program?", "source file"),
         ],
 
         "Medium Hard": [
@@ -116,6 +122,8 @@ def create_questions():
             Question("What do you call a class that is inherited from?", "base class"),
             Question("What do you call a class that inherits from another class?", "derived class"),
             Question("What concept allows the same interface to behave differently in different classes?", "polymorphism"),
+            Question("What keyword is used to explicitly mark that a function overrides a base class function?", "override"),
+            Question("What function is called automatically when assigning one object to another existing object?", "assignment operator"),
         ],
 
         "Hard": [
@@ -129,5 +137,7 @@ def create_questions():
             Question("What container from the standard library stores elements in a dynamic array?", "vector"),
             Question("What namespace is commonly used for cout, cin, and string?", "std"),
             Question("What kind of function can be overridden in a derived class to support runtime polymorphism?", "virtual function"),
+            Question("What technique prevents a header file from being included more than once?", "header guard"),
+            Question("What C++ principle says objects should free resources when they are destroyed?", "raii"),
         ]
     }
