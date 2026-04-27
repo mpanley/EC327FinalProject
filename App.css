@@ -1,7 +1,6 @@
 /* =============================================================================
-   App.css
-   All component-level styles for C++ Quest Academy.
-   Imported by App.jsx. Uses the CSS variables defined in index.css.
+   App.css — C++ Quest Academy
+   All component styles. Uses CSS variables defined in index.css.
 
    Sections:
      1.  Three.js canvas
@@ -11,18 +10,17 @@
      5.  HUD (health bar overlay)
      6.  Monster progress panel
      7.  Controls hint
-     8.  Proximity prompt
+     8.  Proximity prompt (E to interact)
      9.  Adventure mode list
-     10. Combat screen
-     11. Feedback toast
-     12. Game-over screen
+     10. Pokemon-style battle screen
+     11. Game-over screen
    ============================================================================= */
 
 
 /* =============================================================================
    1. THREE.JS CANVAS
-   The <canvas> sits at z-index 0 behind every UI layer.
-   Three.js sizes it to fill the window automatically.
+   Sits at z-index 0 behind every UI layer. Three.js sizes it to fill
+   the whole window automatically in the render loop.
    ============================================================================= */
 .game-canvas {
   position: fixed;
@@ -34,9 +32,9 @@
 
 /* =============================================================================
    2. SHARED SCREEN WRAPPER
-   Every "screen" component (Menu, Combat, GameOver, Adventure) is a full-
-   screen flex column centred both ways. When a screen is not active, React
-   gives it the .hidden modifier which makes it invisible and unclickable.
+   Every overlay screen is a fixed full-window flex column.
+   .hidden makes it invisible AND unclickable so the world underneath
+   stays interactive.
    ============================================================================= */
 .screen {
   position: fixed;
@@ -46,7 +44,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  transition: opacity 0.35s ease;
+  transition: opacity 0.3s ease;
 }
 
 .screen.hidden {
@@ -57,10 +55,8 @@
 
 /* =============================================================================
    3. SHARED BUTTON
-   Used across every screen. Colour variants (red, blue, yellow) are applied
-   by adding that class name: <button className="btn red">.
-
-   The ::before pseudo-element creates the "fill slides up" hover effect.
+   The ::before pseudo-element slides up on hover to create an "ink fill"
+   effect without JavaScript.
    ============================================================================= */
 .btn {
   font-family: 'Press Start 2P', monospace;
@@ -77,7 +73,7 @@
   transition: color 0.18s;
 }
 
-/* The sliding fill — starts off-screen below, slides up on hover */
+/* The fill layer — starts below the button and slides up on hover */
 .btn::before {
   content: '';
   position: absolute;
@@ -88,21 +84,16 @@
   z-index: 0;
 }
 
-/* Text must sit above the ::before fill */
+/* Button text must sit above the fill layer */
 .btn span {
   position: relative;
   z-index: 1;
 }
 
-.btn:hover {
-  color: var(--bg);
-}
+.btn:hover { color: var(--bg); }
+.btn:hover::before { transform: translateY(0); }
 
-.btn:hover::before {
-  transform: translateY(0);
-}
-
-/* Colour variants */
+/* Colour variants — just swap the border, text, and fill colours */
 .btn.red    { border-color: var(--red);    color: var(--red);    }
 .btn.red::before    { background: var(--red);    }
 .btn.blue   { border-color: var(--blue);   color: var(--blue);   }
@@ -110,12 +101,10 @@
 .btn.yellow { border-color: var(--yellow); color: var(--yellow); }
 .btn.yellow::before { background: var(--yellow); }
 
-/* All variants invert to dark text on hover */
+/* All hover states invert to dark text */
 .btn.red:hover,
 .btn.blue:hover,
-.btn.yellow:hover {
-  color: var(--bg);
-}
+.btn.yellow:hover { color: var(--bg); }
 
 
 /* =============================================================================
@@ -144,11 +133,10 @@
   text-transform: uppercase;
 }
 
-/* Player name input on the menu */
 .name-input {
   background: transparent;
   border: 1px solid var(--green);
-  border-radius: 0;             /* keep the square retro look */
+  border-radius: 0;
   color: var(--green);
   font-family: 'Share Tech Mono', monospace;
   font-size: 17px;
@@ -161,15 +149,9 @@
   caret-color: var(--green);
 }
 
-.name-input::placeholder {
-  color: rgba(0, 255, 136, 0.3);
-}
+.name-input::placeholder { color: rgba(0, 255, 136, 0.3); }
+.name-input:focus { box-shadow: 0 0 22px rgba(0, 255, 136, 0.35); }
 
-.name-input:focus {
-  box-shadow: 0 0 22px rgba(0, 255, 136, 0.35);
-}
-
-/* Row of mode buttons */
 .mode-buttons {
   display: flex;
   gap: 20px;
@@ -178,32 +160,29 @@
   justify-content: center;
 }
 
-/* Small description text below the buttons */
 .mode-desc {
   font-size: 10px;
   color: rgba(0, 255, 136, 0.45);
   text-align: center;
-  max-width: 480px;
-  line-height: 2;
+  max-width: 500px;
+  line-height: 2.2;
   padding: 0 16px;
 }
 
 
 /* =============================================================================
-   5. HUD (Health bar overlay — visible during world exploration and combat)
-   pointer-events: none so the bar never blocks mouse clicks on the canvas.
+   5. HUD — always visible during world exploration
+   pointer-events: none so the bar never blocks clicks on the canvas.
    ============================================================================= */
 .hud {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
+  top: 0; left: 0; right: 0;
   z-index: 5;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 10px 18px;
-  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.75) 0%, transparent 100%);
+  background: linear-gradient(to bottom, rgba(0,0,0,0.78) 0%, transparent 100%);
   pointer-events: none;
 }
 
@@ -226,7 +205,6 @@
   letter-spacing: 1px;
 }
 
-/* HP bar container + fill */
 .hp-wrap {
   display: flex;
   align-items: center;
@@ -247,7 +225,7 @@
   overflow: hidden;
 }
 
-/* width is set inline by React based on current HP value */
+/* Width is controlled inline by React based on current HP */
 .hp-fill {
   height: 100%;
   background: var(--red);
@@ -263,8 +241,8 @@
 
 
 /* =============================================================================
-   6. MONSTER PROGRESS PANEL (top-right corner)
-   One row per monster. The dot turns green when that monster is defeated.
+   6. MONSTER PROGRESS PANEL (top-right)
+   One row per monster. Dot turns green when that monster is beaten.
    ============================================================================= */
 .monster-progress {
   position: fixed;
@@ -289,9 +267,10 @@
   transition: color 0.4s;
 }
 
-.prog-item.defeated {
-  color: var(--green);
-}
+.prog-item.defeated { color: var(--green); }
+
+/* Story mode: locked monster (not yet reachable) */
+.prog-item.locked { color: rgba(0, 255, 136, 0.18); }
 
 .prog-dot {
   width: 7px;
@@ -307,9 +286,22 @@
   box-shadow: 0 0 5px var(--green);
 }
 
+/* The next target in story mode pulses to draw attention */
+.prog-item.next-target .prog-dot {
+  background: var(--yellow);
+  border-color: var(--yellow);
+  box-shadow: 0 0 6px var(--yellow);
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { transform: scale(1);    opacity: 1; }
+  50%       { transform: scale(1.4); opacity: 0.7; }
+}
+
 
 /* =============================================================================
-   7. CONTROLS HINT (bottom-centre during world exploration)
+   7. CONTROLS HINT (bottom-centre, world view only)
    ============================================================================= */
 .controls-hint {
   position: fixed;
@@ -328,8 +320,8 @@
 
 /* =============================================================================
    8. PROXIMITY PROMPT
-   Slides into view when the player walks near a monster.
-   React toggles the .visible class to show/hide it.
+   Appears when the player walks within interaction range of a monster.
+   .visible is toggled by React.
    ============================================================================= */
 .proximity-prompt {
   position: fixed;
@@ -367,13 +359,22 @@
   line-height: 1.8;
 }
 
+/* Story mode: this monster is not yet reachable */
+.prox-locked {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 9px;
+  color: var(--red);
+  margin-top: 8px;
+  letter-spacing: 1px;
+}
+
 .prox-actions {
   display: flex;
   gap: 10px;
   justify-content: center;
 }
 
-/* Difficulty colour classes — applied in JSX based on monster.difficulty */
+/* Difficulty colour classes */
 .diff-easy        { color: #00ff88; }
 .diff-easy-medium { color: #88ff44; }
 .diff-medium      { color: #ffcc00; }
@@ -383,17 +384,18 @@
 
 /* =============================================================================
    9. ADVENTURE MODE LIST
-   A clickable list of monsters shown instead of the 3D world in Adventure Mode.
+   Shown instead of the world in Adventure Mode — clickable monster rows.
    ============================================================================= */
 .adventure-screen {
   background: rgba(2, 8, 5, 0.97);
+  gap: 0;
 }
 
 .adv-heading {
   font-family: 'Press Start 2P', monospace;
   font-size: 10px;
   color: var(--green);
-  margin-bottom: 16px;
+  margin-bottom: 20px;
   letter-spacing: 2px;
 }
 
@@ -402,11 +404,10 @@
   flex-direction: column;
   gap: 10px;
   width: 100%;
-  max-width: 440px;
-  margin-bottom: 16px;
+  max-width: 460px;
+  margin-bottom: 20px;
 }
 
-/* Each monster row */
 .adv-item {
   display: flex;
   align-items: center;
@@ -425,7 +426,7 @@
 
 /* Greyed out once beaten */
 .adv-item.defeated {
-  opacity: 0.35;
+  opacity: 0.32;
   cursor: not-allowed;
   pointer-events: none;
 }
@@ -445,234 +446,415 @@
 
 
 /* =============================================================================
-   10. COMBAT SCREEN
+   10. POKEMON-STYLE BATTLE SCREEN
+   Layout mirrors the classic Game Boy Pokémon battle:
+
+   ┌──────────────────────────────────────────────────────┐
+   │  [Monster sprite area — right side, large]           │
+   │  [Monster speech bubble with question above it]      │
+   │                                                      │
+   │  [Player sprite area — left side, smaller/lower]     │
+   │                                                      │
+   │  [Bottom panel: HP bars + answer input]              │
+   └──────────────────────────────────────────────────────┘
    ============================================================================= */
-.combat-screen {
-  background: rgba(2, 8, 5, 0.97);
-  backdrop-filter: blur(6px);
-}
 
-/*
-  Grid layout:
-    [Player portrait]  [VS + counter]  [Monster portrait]
-    [        Question panel (full width)                 ]
-*/
-.combat-grid {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  grid-template-rows: auto auto;
-  gap: 20px 16px;
-  width: 100%;
-  max-width: 900px;
-  padding: 0 20px;
-  align-items: center;
-}
-
-/* Combatant column: portrait canvas + name + HP bar */
-.combatant {
+/* Full-screen battle overlay */
+.battle-screen {
+  background: #0a1a0f;  /* dark dungeon green */
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 12px;
-}
-
-.combatant-label {
-  font-family: 'Press Start 2P', monospace;
-  font-size: 8px;
-  letter-spacing: 2px;
-  color: var(--green-dim);
-}
-
-/* Three.js renders into these <canvas> elements */
-.portrait-canvas {
-  width: 130px;
-  height: 130px;
-  border: 1px solid var(--border);
-  background: transparent;
-  display: block;
-}
-
-.combatant-name {
-  font-family: 'Press Start 2P', monospace;
-  font-size: 10px;
-  color: var(--text);
-  text-align: center;
-  line-height: 1.5;
-}
-
-.c-hp-bar {
-  width: 160px;
-  height: 11px;
-  border: 1px solid rgba(255, 51, 85, 0.35);
-  background: rgba(0, 0, 0, 0.5);
+  justify-content: flex-end;  /* panel anchors to the bottom */
   overflow: hidden;
 }
 
-/* width set inline in JSX */
-.c-hp-fill {
+/* ── Battle field: the top 60% where sprites live ── */
+.battle-field {
+  position: relative;
+  flex: 1;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  /* Ground line drawn with a gradient strip */
+  background:
+    linear-gradient(to bottom,
+      transparent 0%,
+      transparent 68%,
+      rgba(0, 255, 136, 0.08) 68%,
+      rgba(0, 255, 136, 0.08) 70%,
+      transparent 70%
+    );
+}
+
+/* ── Monster side (right, larger — "enemy" convention) ── */
+.battle-monster-side {
+  position: absolute;
+  right: 8%;
+  top: 8%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+
+/* HP bar card that floats above the monster — left-aligned, Pokémon style */
+.monster-status-card {
+  background: rgba(4, 18, 10, 0.92);
+  border: 1px solid var(--border);
+  padding: 10px 16px;
+  min-width: 220px;
+  margin-bottom: 8px;
+  box-shadow: 0 0 16px rgba(0, 255, 136, 0.1);
+  align-self: flex-start;
+}
+
+.status-name {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 9px;
+  color: var(--text);
+  margin-bottom: 6px;
+  letter-spacing: 1px;
+}
+
+.status-hp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-hp-label {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 7px;
+  color: var(--yellow);
+}
+
+.status-hp-bar {
+  flex: 1;
+  height: 8px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 204, 0, 0.3);
+  overflow: hidden;
+}
+
+/* Monster "HP" bar actually shows questions remaining */
+.status-hp-fill {
+  height: 100%;
+  background: var(--yellow);
+  transition: width 0.4s ease;
+  box-shadow: 0 0 5px rgba(255, 204, 0, 0.5);
+}
+
+.status-hp-fill.danger { background: var(--red); }
+
+/* Three.js renders the monster 3D model into this canvas */
+.battle-monster-canvas {
+  width: 200px;
+  height: 200px;
+  display: block;
+  /* Slight drop shadow to ground the sprite */
+  filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.8));
+}
+
+/* ── Speech bubble: sits above the monster, holds the question ── */
+.speech-bubble {
+  position: absolute;
+  /* Position it so the tail points at the monster */
+  right: calc(8% + 200px + 16px);   /* left of the monster canvas */
+  top: 6%;
+  max-width: 340px;
+  background: rgba(4, 18, 10, 0.96);
+  border: 2px solid var(--green);
+  padding: 16px 20px;
+  box-shadow: 0 0 24px rgba(0, 255, 136, 0.2);
+  z-index: 2;
+}
+
+/* Tail pointing right toward the monster */
+.speech-bubble::after {
+  content: '';
+  position: absolute;
+  right: -14px;
+  top: 28px;
+  border-top: 8px solid transparent;
+  border-bottom: 8px solid transparent;
+  border-left: 14px solid var(--green);
+}
+
+.bubble-difficulty {
+  font-size: 8px;
+  color: var(--green-dim);
+  letter-spacing: 2px;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.bubble-question {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 14px;
+  color: var(--text);
+  line-height: 1.7;
+}
+
+/* Question number badge */
+.bubble-qnum {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 7px;
+  color: var(--green);
+  margin-top: 10px;
+  letter-spacing: 1px;
+}
+
+/* ── Player side (left, smaller/lower) ── */
+.battle-player-side {
+  position: absolute;
+  left: 6%;
+  bottom: 18%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Three.js renders the player 3D model into this canvas */
+.battle-player-canvas {
+  width: 140px;
+  height: 140px;
+  display: block;
+  filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.8));
+}
+
+/* ── Bottom panel: HP bars + answer input ── */
+.battle-panel {
+  width: 100%;
+  background: rgba(4, 18, 10, 0.97);
+  border-top: 2px solid var(--border);
+  padding: 16px 24px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.6);
+}
+
+/* Row showing both HP bars side by side */
+.battle-hp-row {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+}
+
+/* Individual HP section (label + bar + number) */
+.battle-hp-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.battle-hp-label {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.battle-hp-name { color: var(--text); }
+.battle-hp-num  { color: var(--green-dim); }
+
+.battle-hp-bar {
+  height: 12px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(0, 255, 136, 0.25);
+  overflow: hidden;
+}
+
+.battle-hp-fill {
   height: 100%;
   transition: width 0.45s ease;
 }
 
-.c-hp-fill.player {
-  background: var(--red);
-  box-shadow: 0 0 6px rgba(255, 51, 85, 0.5);
+/* Player HP bar goes red as health drops */
+.battle-hp-fill.player-hp {
+  background: var(--green);
+  box-shadow: 0 0 6px rgba(0, 255, 136, 0.4);
 }
 
-.c-hp-fill.monster {
+.battle-hp-fill.player-hp.medium { background: var(--yellow); }
+.battle-hp-fill.player-hp.low    { background: var(--red);    }
+
+/* Monster bar shows questions remaining */
+.battle-hp-fill.monster-hp {
   background: var(--yellow);
-  box-shadow: 0 0 6px rgba(255, 204, 0, 0.5);
+  box-shadow: 0 0 6px rgba(255, 204, 0, 0.4);
 }
 
-/* Middle column: VS text + correct counter */
-.vs-col {
+/* Progress pips (3 circles) showing questions correct */
+.progress-pips {
   display: flex;
-  flex-direction: column;
+  gap: 6px;
   align-items: center;
-  gap: 18px;
+  justify-content: center;
 }
 
-.vs-text {
-  font-family: 'Press Start 2P', monospace;
-  font-size: 26px;
-  color: var(--yellow);
-  text-shadow: 0 0 16px rgba(255, 204, 0, 0.5);
+.pip {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid var(--green-dim);
+  background: transparent;
+  transition: background 0.3s, box-shadow 0.3s;
 }
 
-.correct-display {
-  font-family: 'Press Start 2P', monospace;
-  font-size: 9px;
-  color: var(--green);
-  text-align: center;
-  line-height: 1.8;
+.pip.filled {
+  background: var(--green);
+  border-color: var(--green);
+  box-shadow: 0 0 6px var(--green);
 }
 
-/* Question panel — spans all 3 columns via grid-column in JSX */
-.question-panel {
-  grid-column: 1 / -1;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  padding: 24px 28px;
-  box-shadow: 0 0 28px rgba(0, 255, 136, 0.07);
-}
-
-.q-meta {
-  font-size: 9px;
-  color: var(--green-dim);
-  letter-spacing: 2px;
-  margin-bottom: 14px;
-  display: flex;
-  justify-content: space-between;
-}
-
-.q-text {
-  font-size: 15px;
-  color: var(--text);
-  line-height: 1.75;
-  margin-bottom: 20px;
-  min-height: 44px;
-}
-
-.answer-row {
+/* Answer input row */
+.battle-input-row {
   display: flex;
   gap: 10px;
+  align-items: stretch;
 }
 
-.answer-input {
+.battle-answer-input {
   flex: 1;
   background: transparent;
   border: 1px solid var(--green);
   color: var(--green);
   font-family: 'Share Tech Mono', monospace;
-  font-size: 15px;
-  padding: 10px 14px;
+  font-size: 16px;
+  padding: 11px 16px;
   outline: none;
   caret-color: var(--green);
+  transition: box-shadow 0.2s;
 }
 
-.answer-input:focus {
-  box-shadow: 0 0 12px rgba(0, 255, 136, 0.25);
+.battle-answer-input:focus {
+  box-shadow: 0 0 14px rgba(0, 255, 136, 0.3);
 }
 
-.answer-input:disabled {
-  opacity: 0.4;
+.battle-answer-input:disabled {
+  opacity: 0.35;
   cursor: not-allowed;
 }
 
-
-/* =============================================================================
-   11. FEEDBACK TOAST
-   Flashes a correct/wrong message at the top of the combat screen.
-   React toggles .show, .correct, .wrong.
-   ============================================================================= */
-.feedback-toast {
-  position: fixed;
-  top: 70px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 20;
+/* ── Feedback message shown under the input after each answer ── */
+.battle-feedback {
   font-family: 'Press Start 2P', monospace;
   font-size: 10px;
   letter-spacing: 1px;
-  padding: 12px 26px;
-  border: 1px solid transparent;
   text-align: center;
-  max-width: 520px;
-  line-height: 1.9;
-  pointer-events: none;
-  opacity: 0;
+  padding: 8px 0 0;
+  min-height: 22px;
   transition: opacity 0.2s;
 }
 
-.feedback-toast.show {
-  opacity: 1;
+.battle-feedback.correct { color: var(--green); }
+.battle-feedback.wrong   { color: var(--red);   }
+.battle-feedback.hidden  { opacity: 0; }
+
+/* ── "Battle won" / "Next monster" flash overlay ── */
+.battle-result-flash {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.65);
+  z-index: 20;
+  animation: fadeInFlash 0.3s ease;
 }
 
-.feedback-toast.correct {
+@keyframes fadeInFlash {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.battle-result-text {
+  font-family: 'Press Start 2P', monospace;
+  font-size: clamp(20px, 4vw, 36px);
+  text-align: center;
+  line-height: 1.8;
+  padding: 32px 48px;
+  border: 2px solid;
+}
+
+.battle-result-text.win {
   color: var(--green);
   border-color: var(--green);
-  background: rgba(0, 255, 136, 0.07);
-  box-shadow: 0 0 18px rgba(0, 255, 136, 0.18);
+  background: rgba(0, 20, 10, 0.9);
+  text-shadow: 0 0 20px var(--green);
 }
 
-.feedback-toast.wrong {
+.battle-result-text.lose {
   color: var(--red);
   border-color: var(--red);
-  background: rgba(255, 51, 85, 0.07);
-  box-shadow: 0 0 18px rgba(255, 51, 85, 0.18);
+  background: rgba(20, 0, 5, 0.9);
+  text-shadow: 0 0 20px var(--red);
 }
+
+/* ── Shake animation on player when taking damage ── */
+@keyframes shake {
+  0%   { transform: translateX(0); }
+  20%  { transform: translateX(-8px); }
+  40%  { transform: translateX(8px); }
+  60%  { transform: translateX(-5px); }
+  80%  { transform: translateX(5px); }
+  100% { transform: translateX(0); }
+}
+
+.shake { animation: shake 0.4s ease; }
+
+/* ── Flash red on the field when damage is taken ── */
+@keyframes damageFlash {
+  0%   { background: rgba(255, 0, 50, 0); }
+  30%  { background: rgba(255, 0, 50, 0.18); }
+  100% { background: rgba(255, 0, 50, 0); }
+}
+
+.damage-flash { animation: damageFlash 0.5s ease; }
 
 
 /* =============================================================================
-   12. GAME-OVER SCREEN
+   11. GAME-OVER SCREEN
    ============================================================================= */
 .gameover-screen {
-  background: rgba(0, 0, 0, 0.95);
-  gap: 16px;
+  background: rgba(0, 0, 0, 0.96);
+  gap: 20px;
 }
 
 .go-title {
   font-family: 'Press Start 2P', monospace;
   font-size: clamp(20px, 5vw, 46px);
   text-align: center;
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
-.go-title.win {
+.go-title.win  {
   color: var(--green);
-  text-shadow: 0 0 28px rgba(0, 255, 136, 0.45);
+  text-shadow: 0 0 28px rgba(0, 255, 136, 0.5);
 }
 
 .go-title.lose {
   color: var(--red);
-  text-shadow: 0 0 28px rgba(255, 51, 85, 0.45);
+  text-shadow: 0 0 28px rgba(255, 51, 85, 0.5);
 }
 
 .go-sub {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text);
   text-align: center;
-  line-height: 2;
+  line-height: 2.2;
   max-width: 480px;
   padding: 0 16px;
+}
+
+/* Two buttons side by side on the game-over screen */
+.go-buttons {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
