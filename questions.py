@@ -3,7 +3,7 @@
 
 
 class Question:
-    def __init__(self, prompt, answer):
+    def __init__(self, prompt, answer, time_limit=15):
         # Save the question text that will be shown to the player
         self.prompt = prompt
 
@@ -11,6 +11,30 @@ class Question:
         # .strip() removes extra spaces
         # .lower() makes the answer case-insensitive
         self.answer = str(answer).strip().lower()
+
+        # How many seconds the player has to answer this question
+        self.time_limit = time_limit
+    
+    # this will have to be handed with javascript later on, but for now we can just see 
+    def timed_input(self, prompt_text = "Your answer: "):
+        # going to use threading to enforce a time limit on input 
+        result = [None]  # Use a list to allow modification inside the thread
+
+        def get_input():
+            try: 
+                result[0] = input(prompt_text).strip().lower()
+            except EOFError:
+                result[0] = None  # Handle EOFError gracefully
+        input_thread = threading.Thread(target=get_input)
+
+        # start threat player can now type 
+        input_thread.start()
+
+        input_thread.join(timeout=self.time_limit)  # Wait for input for time_limit seconds
+
+        if input_thread.is_alive():
+            print(f"\nTime's up! You had {self.time_limit} seconds.")
+            return "TIMEOUT"  # Return timeout if time runs out
 
     def ask(self):
         # Display the question to the player

@@ -14,6 +14,10 @@ class Player:
         # but it could be useful later if you add power-ups or buffs
         self.attack_modifier = 1.0
 
+
+    # @classmethod
+    # def from_save_data(cls, save_data):
+
     def take_damage(self, amount):
         # Subtract the incoming damage from the player's health
         self.health -= amount

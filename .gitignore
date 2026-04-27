@@ -1,0 +1,10 @@
+save_data.json
+questions1.py
+__pycache__/
+__MACOSX/
+.DS_Store
+
+# Local backups
+*.backup.jsx
+*.backup.py
+*.original.jsx

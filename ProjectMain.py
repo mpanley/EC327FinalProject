@@ -53,10 +53,12 @@ def battle(player, monster, questions, required_correct=5):
         # If the answer was correct, increase progress
         if result:
             correct_answers += 1
+            stats["correct_answers"] += 1
             print("You avoided the attack!")
 
         # If the answer was wrong, the monster attacks the player
         else:
+            stats["total_wrong"] += 1
             monster.attack_player(player)
 
     # If the player is still alive and reached the required number of correct answers,
